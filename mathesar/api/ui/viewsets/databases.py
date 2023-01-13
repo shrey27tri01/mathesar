@@ -4,7 +4,8 @@ from rest_framework.decorators import action
 from rest_framework.mixins import ListModelMixin, RetrieveModelMixin
 from rest_framework.response import Response
 
-from mathesar.models import Database
+from mathesar.api.ui.permissions.ui_database import UIDatabaseAccessPolicy
+from mathesar.models.base import Database
 from mathesar.api.dj_filters import DatabaseFilter
 from mathesar.api.pagination import DefaultLimitOffsetPagination
 
@@ -19,14 +20,19 @@ class DatabaseViewSet(viewsets.GenericViewSet, ListModelMixin, RetrieveModelMixi
     pagination_class = DefaultLimitOffsetPagination
     filter_backends = (filters.DjangoFilterBackend,)
     filterset_class = DatabaseFilter
+    access_policy = UIDatabaseAccessPolicy
 
     def get_queryset(self):
-        return Database.objects.all().order_by('-created_at')
+        return self.access_policy.scope_queryset(
+            self.request,
+            Database.objects.all().order_by('-created_at')
+        )
 
     @action(methods=['get'], detail=True)
     def types(self, request, pk=None):
         database = self.get_object()
-        serializer = TypeSerializer(database.supported_types, many=True)
+        supported_ui_types = database.supported_ui_types
+        serializer = TypeSerializer(supported_ui_types, many=True)
         return Response(serializer.data)
 
     @action(methods=['get'], detail=True)

@@ -1,4 +1,4 @@
-import '@testing-library/jest-dom/extend-expect';
+import '@testing-library/jest-dom';
 import { render } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import NumberInput from '../NumberInput.svelte';
@@ -28,6 +28,7 @@ test.each([
   const { getByLabelText } = render(NumberInput, {
     locale,
     'aria-label': label,
+    useGrouping: true,
   });
   const input = getByLabelText(label) as HTMLInputElement;
   expect(input.value).toBe('');

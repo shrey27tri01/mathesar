@@ -1,4 +1,4 @@
-from db.functions.base import Literal, ColumnName
+from db.functions.base import Literal, ColumnName, Alias
 from db.functions.known_db_functions import known_db_functions
 from db.functions.exceptions import UnknownDBFunctionID, BadDBFunctionFormat
 
@@ -9,7 +9,7 @@ def get_db_function_from_ma_function_spec(spec):
 
     ```
     {"and": [
-        {"empty": [
+        {"null": [
             {"column_name": ["some_column"]},
         ]},
         {"equal": [
@@ -26,7 +26,7 @@ def get_db_function_from_ma_function_spec(spec):
     """
     try:
         db_function_subclass_id, raw_parameters = get_raw_spec_components(spec)
-        db_function_subclass = _get_db_function_subclass_by_id(db_function_subclass_id)
+        db_function_subclass = get_db_function_subclass_by_id(db_function_subclass_id)
         parameters = [
             _process_parameter(
                 parameter=raw_parameter,
@@ -47,6 +47,7 @@ def _process_parameter(parameter, parent_db_function_subclass):
     elif (
         parent_db_function_subclass is Literal
         or parent_db_function_subclass is ColumnName
+        or parent_db_function_subclass is Alias
     ):
         # Everything except for a dict is considered a literal parameter,
         # and only the Literal and ColumnName DBFunctions can have
@@ -58,7 +59,7 @@ def _process_parameter(parameter, parent_db_function_subclass):
         )
 
 
-def _get_db_function_subclass_by_id(subclass_id):
+def get_db_function_subclass_by_id(subclass_id):
     for db_function_subclass in known_db_functions:
         if db_function_subclass.id == subclass_id:
             return db_function_subclass

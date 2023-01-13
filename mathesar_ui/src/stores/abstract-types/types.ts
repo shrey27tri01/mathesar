@@ -1,22 +1,30 @@
 import type {
   FormConfiguration,
   FormConfigurationVariable,
-  FormInputDataType,
   FormValues,
+  IconProps,
 } from '@mathesar-component-library/types';
-import type { DbType } from '@mathesar/App.d';
-import type { Column } from '@mathesar/stores/table-data/types';
-import type { States } from '@mathesar/utils/api';
+import type { CellDataType } from '@mathesar/components/cell-fabric/data-types/typeDefinitions';
+import type { DbType } from '@mathesar/AppTypes';
+import type { Column } from '@mathesar/api/types/tables/columns';
+import type { States } from '@mathesar/api/utils/requestUtils';
+import type { abstractTypeCategory } from './constants';
+
+type AbstractTypeCategoryKeys = keyof typeof abstractTypeCategory;
+export type AbstractTypeCategoryIdentifier =
+  typeof abstractTypeCategory[AbstractTypeCategoryKeys];
 
 export interface AbstractTypeResponse {
   name: string;
-  identifier: string;
+  identifier: AbstractTypeCategoryIdentifier;
   db_types: DbType[];
 }
 
-interface AbstractTypeConfigFormVariable extends FormConfigurationVariable {
-  conditionalDefault?: Record<DbType, FormInputDataType>;
+export interface AbstractTypeConfigFormVariable
+  extends FormConfigurationVariable {
+  conditionalDefault?: Record<DbType, unknown>;
 }
+
 export interface AbstractTypeConfigForm extends FormConfiguration {
   variables: Record<string, AbstractTypeConfigFormVariable>;
 }
@@ -46,18 +54,29 @@ export interface AbstractTypeDisplayConfig {
   ) => FormValues;
 }
 
+export interface CellInfo {
+  type: CellDataType;
+  config?: Record<string, unknown>;
+  conditionalConfig?: Record<DbType, Record<string, unknown>>;
+}
+
+export interface AbstractTypeIconArgs {
+  dbType: DbType;
+  typeOptions: Column['type_options'];
+}
+
 export interface AbstractTypeConfiguration {
   defaultDbType?: DbType;
-  icon: string;
+  getIcon: (args?: AbstractTypeIconArgs) => IconProps | IconProps[];
   allowSettingDefaultValue?: boolean;
-  input: {
-    type: string;
-    config?: Record<string, unknown>;
-    conditionalConfig?: Record<DbType, Record<string, unknown>>;
-  };
+  cellInfo: CellInfo;
   getDbConfig?: (selectedDbType?: DbType) => AbstractTypeDbConfig;
   getDisplayConfig?: () => AbstractTypeDisplayConfig;
 }
+
+export type AbstractTypeConfigurationPartialMap = Partial<
+  Record<AbstractTypeCategoryIdentifier, AbstractTypeConfiguration>
+>;
 
 export interface AbstractType
   extends Omit<AbstractTypeResponse, 'db_types'>,
@@ -67,8 +86,57 @@ export interface AbstractType
 
 export type AbstractTypesMap = Map<AbstractType['identifier'], AbstractType>;
 
+export type AbstractTypeConfigurationFactory = (
+  map: AbstractTypesMap,
+) => AbstractTypeConfiguration;
+
 export interface AbstractTypesSubstance {
   state: States;
   data: AbstractTypesMap;
   error?: string;
 }
+
+export interface AbstractTypeFilterDefinitionResponse {
+  id: string;
+  name: string;
+  aliases?: Record<AbstractTypeCategoryIdentifier, string>;
+  uiTypeParameterMap: Partial<
+    Record<AbstractTypeCategoryIdentifier, AbstractTypeCategoryIdentifier[]>
+  >;
+}
+
+export interface AbstractTypeLimitedFilterInformation {
+  id: AbstractTypeFilterDefinitionResponse['id'];
+  name: AbstractTypeFilterDefinitionResponse['name'];
+  hasAliases: boolean;
+  hasParams: boolean;
+}
+
+export interface AbstractTypeFilterDefinition {
+  id: AbstractTypeFilterDefinitionResponse['id'];
+  name: AbstractTypeFilterDefinitionResponse['name']; // Would be extraced from alias if present
+  parameters: AbstractTypeCategoryIdentifier[];
+}
+
+export type AbstractTypeFilterDefinitionMap = Map<
+  AbstractTypeCategoryIdentifier,
+  AbstractTypeFilterDefinition[]
+>;
+
+export interface AbstractTypePreprocFunctionsResponse {
+  id: string;
+  name: string;
+  appliesTo: AbstractTypeCategoryIdentifier[];
+  returns: AbstractTypeCategoryIdentifier;
+  possibleReturnValues?: { label: string; value: unknown }[];
+}
+
+export type AbstractTypePreprocFunctionDefinition = Omit<
+  AbstractTypePreprocFunctionsResponse,
+  'appliesTo'
+>;
+
+export type AbstractTypePreprocFunctionDefinitionMap = Map<
+  AbstractTypeCategoryIdentifier,
+  AbstractTypePreprocFunctionDefinition[]
+>;

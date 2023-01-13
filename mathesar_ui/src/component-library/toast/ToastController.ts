@@ -1,15 +1,16 @@
-import {
-  faCheck,
-  faExclamationTriangle,
-  faSpinner,
-} from '@fortawesome/free-solid-svg-icons';
-import type { IconProps } from '@mathesar-component-library-dir/icon/Icon.d';
+import type { IconProps } from '@mathesar-component-library-dir/icon/IconTypes';
 import type { SvelteComponent } from 'svelte';
 import { linear } from 'svelte/easing';
 import type { Writable, Readable } from 'svelte/store';
 import { writable, derived } from 'svelte/store';
 import type { PauseableTweened } from '@mathesar-component-library-dir/common/utils/pauseableTweened';
 import { pauseableTweened } from '@mathesar-component-library-dir/common/utils/pauseableTweened';
+import {
+  iconSuccess,
+  iconLoading,
+  iconError,
+  iconInfo,
+} from '@mathesar-component-library-dir/common/icons';
 
 /**
  * Allows control of the toast message after it is displayed
@@ -32,7 +33,9 @@ interface ToastEntryProps {
    * If provided, will be used in place of `title` and `message`.
    */
   contentComponent?: typeof SvelteComponent;
-  contentComponentProps?: Readable<unknown> | unknown;
+  contentComponentProps?:
+    | Readable<Record<string, unknown>>
+    | Record<string, unknown>;
   icon?: Readable<IconProps> | IconProps;
   backgroundColor: Readable<string> | string;
   textColor: Readable<string> | string;
@@ -80,9 +83,9 @@ interface ToastEntryProps {
 }
 
 const baseDefaultProps: ToastEntryProps = {
-  backgroundColor: 'rgba(77, 77, 77, 0.9)',
-  textColor: 'white',
-  progressColor: 'rgba(255, 255, 255, 0.7)',
+  backgroundColor: 'var(--sky-500)',
+  textColor: 'var(--slate-800)',
+  progressColor: 'rgba(255, 255, 255, 0.6)',
   lifetime: 6000,
   hasProgress: true,
   initialProgress: 1,
@@ -184,7 +187,7 @@ interface MakeToast {
 
 export function makeToastProps(detail: ToastDetail): Partial<ToastEntryProps> {
   if (typeof detail === 'string') {
-    return { message: detail };
+    return { title: detail };
   }
   return detail;
 }
@@ -195,21 +198,26 @@ export function makeToast(
   const controller = new ToastController({ defaultProps });
 
   function info(detail: ToastDetail = {}) {
-    return controller.show(makeToastProps(detail));
+    return controller.show(
+      makeToastProps({
+        icon: iconInfo,
+        ...makeToastProps(detail),
+      }),
+    );
   }
 
   function success(detail: ToastDetail = {}) {
     return controller.show({
-      icon: { data: faCheck },
-      backgroundColor: 'rgba(92, 159, 84, 0.9)',
+      icon: iconSuccess,
+      backgroundColor: 'var(--green-100)',
       ...makeToastProps(detail),
     });
   }
 
   function error(detail: ToastDetail = {}) {
     return controller.show({
-      icon: { data: faExclamationTriangle },
-      backgroundColor: 'rgba(159, 86, 77, 0.9)',
+      icon: iconError,
+      backgroundColor: 'var(--red-100)',
       ...makeToastProps(detail),
     });
   }
@@ -220,7 +228,7 @@ export function makeToast(
 
   function spinner(detail: ToastDetail = {}) {
     return controller.show({
-      icon: { data: faSpinner, spin: true },
+      icon: { ...iconLoading },
       lifetime: 0,
       allowDismiss: false,
       hasProgress: false,

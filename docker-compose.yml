@@ -1,5 +1,5 @@
 version: "3.9"
-   
+
 services:
   db:
     image: postgres:13
@@ -11,18 +11,19 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./.volumes:/var/lib/postgresql/data
+      - postgresql_data:/var/lib/postgresql/data
   service:
     build:
       context: .
-      # Change this to Dockerfile.integ-tests to be able to run e2e integ tests
-      dockerfile: Dockerfile
+      dockerfile: ${DOCKERFILE}
     container_name: mathesar_service
     environment:
       - MODE=${MODE-PRODUCTION}
       - DJANGO_ALLOW_ASYNC_UNSAFE=true
       - DISPLAY=${DISPLAY}
       - XAUTHORITY=/.Xauthority
+      - DJANGO_SUPERUSER_PASSWORD=password
+      - DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE-config.settings}
     command: dockerize -wait tcp://mathesar_db:5432 -timeout 30s ./run.sh
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
@@ -35,6 +36,6 @@ services:
       - "6006:6006"
     depends_on:
       - db
-
 volumes:
   ui_node_modules:
+  postgresql_data:

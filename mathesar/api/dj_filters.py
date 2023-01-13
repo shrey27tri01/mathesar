@@ -1,28 +1,43 @@
 from django_filters import BooleanFilter, DateTimeFromToRangeFilter, OrderingFilter
 from django_property_filter import PropertyFilterSet, PropertyBaseInFilter, PropertyCharFilter, PropertyOrderingFilter
 
-from mathesar.database.types import MathesarTypeIdentifier
-from mathesar.models import Schema, Table, Database
-
-FILTER_OPTIONS_BY_TYPE_IDENTIFIER = {
-    MathesarTypeIdentifier.BOOLEAN.value:
-    {
-        "db_type": "BOOLEAN",
-        "options": [{
-            "op": "eq",
-            "value": {
-                "allowed_types": ["BOOLEAN"],
-            }
-        }, {
-            "op": "is_null",
-            "value": "null",
-        }]
-    }
-}
+from mathesar.models.base import Schema, Table, Database, DataFile
+from mathesar.models.query import UIQuery
 
 
 class CharInFilter(PropertyBaseInFilter, PropertyCharFilter):
     pass
+
+
+class DatabaseFilter(PropertyFilterSet):
+    sort_by = OrderingFilter(
+        fields=(
+            ('id', 'id'),
+            ('name', 'name'),
+        ),
+        label="Sort By",
+    )
+
+    class Meta:
+        model = Database
+        fields = ['deleted']
+
+
+class DataFileFilter(PropertyFilterSet):
+    database = CharInFilter(field_name='table_imported_to__schema__database__name', lookup_expr='in')
+    name = CharInFilter(field_name='name', lookup_expr='in')
+
+    sort_by = PropertyOrderingFilter(
+        fields=(
+            ('id', 'id'),
+            ('name', 'name'),
+        ),
+        label="Sort By",
+    )
+
+    class Meta:
+        model = DataFile
+        fields = ['name']
 
 
 class SchemaFilter(PropertyFilterSet):
@@ -43,6 +58,7 @@ class SchemaFilter(PropertyFilterSet):
 
 
 class TableFilter(PropertyFilterSet):
+    database = CharInFilter(field_name='schema__database__name', lookup_expr='in')
     name = CharInFilter(field_name='name', lookup_expr='in')
     created = DateTimeFromToRangeFilter(field_name='created_at')
     updated = DateTimeFromToRangeFilter(field_name='updated_at')
@@ -61,8 +77,11 @@ class TableFilter(PropertyFilterSet):
         fields = ['name', 'schema', 'created_at', 'updated_at', 'import_verified']
 
 
-class DatabaseFilter(PropertyFilterSet):
-    sort_by = OrderingFilter(
+class UIQueryFilter(PropertyFilterSet):
+    database = CharInFilter(field_name='base_table__schema__database__name', lookup_expr='in')
+    name = CharInFilter(field_name='name', lookup_expr='in')
+
+    sort_by = PropertyOrderingFilter(
         fields=(
             ('id', 'id'),
             ('name', 'name'),
@@ -71,5 +90,5 @@ class DatabaseFilter(PropertyFilterSet):
     )
 
     class Meta:
-        model = Database
-        fields = ['deleted']
+        model = UIQuery
+        fields = ['name']

@@ -1,5 +1,8 @@
 <script lang="ts">
-  import type { Appearance, Size } from '@mathesar-component-library/types';
+  import type {
+    Appearance,
+    Size,
+  } from '@mathesar-component-library-dir/commonTypes';
 
   /**
    * Button appearance. One of: 'default', 'primary', 'secondary', 'plain', 'ghost'.
@@ -12,6 +15,9 @@
    * @required
    */
   export let size: Size = 'medium';
+
+  export let danger = false;
+  export let active = false;
 
   // Additional classes
   let classes = '';
@@ -29,9 +35,16 @@
   bind:this={element}
   type="button"
   class={allClasses}
+  class:danger
+  class:active
   {...$$restProps}
   on:click
   on:keydown
+  on:focus
+  on:blur
+  on:mouseenter
+  on:mouseleave
+  on:mousedown
 >
   <slot />
 </button>

@@ -1,36 +1,52 @@
-import { writable, get as getStoreValue } from 'svelte/store';
+import {
+  writable,
+  type Readable,
+  type Writable,
+  type Unsubscriber,
+  derived,
+  get,
+} from 'svelte/store';
 import {
   States,
   getAPI,
   deleteAPI,
   patchAPI,
   postAPI,
-} from '@mathesar/utils/api';
-import type { Writable, Unsubscriber } from 'svelte/store';
-import type { CancellablePromise } from '@mathesar-component-library';
-import type { DBObjectEntry } from '@mathesar/App.d';
+} from '@mathesar/api/utils/requestUtils';
+import {
+  isDefinedNonNullable,
+  type CancellablePromise,
+  getGloballyUniqueId,
+} from '@mathesar-component-library';
+import type { DBObjectEntry } from '@mathesar/AppTypes';
 import type {
   Result as ApiRecord,
   Response as ApiRecordsResponse,
   Group as ApiGroup,
   Grouping as ApiGrouping,
-  ResultValue,
   GroupingMode,
   GetRequestParams as ApiGetRequestParams,
-} from '@mathesar/api/tables/records';
+} from '@mathesar/api/types/tables/records';
+import type { Column } from '@mathesar/api/types/tables/columns';
+import { getErrorMessage } from '@mathesar/utils/errors';
+import type Pagination from '@mathesar/utils/Pagination';
+import { buildRecordSummariesForSheet } from './record-summaries/recordSummaryUtils';
 import type { Meta } from './meta';
-import type { ColumnsDataStore, Column } from './columns';
-import type { Pagination } from './pagination';
+import type { RowKey } from './utils';
+import { validateRow, getCellKey } from './utils';
+import type { ColumnsDataStore } from './columns';
 import type { Sorting } from './sorting';
-import type { Grouping as GroupingTODORename } from './grouping';
+import type { Grouping as GroupingRequest } from './grouping';
 import type { Filtering } from './filtering';
-import { TabularType } from './TabularType';
+import type { SearchFuzzy } from './searchFuzzy';
+import RecordSummaryStore from './record-summaries/RecordSummaryStore';
 
 export interface RecordsRequestParamsData {
   pagination: Pagination;
   sorting: Sorting;
-  grouping: GroupingTODORename;
+  grouping: GroupingRequest;
   filtering: Filtering;
+  searchFuzzy: SearchFuzzy;
 }
 
 function buildFetchQueryString(data: RecordsRequestParamsData): string {
@@ -39,6 +55,7 @@ function buildFetchQueryString(data: RecordsRequestParamsData): string {
     ...data.sorting.recordsRequestParamsIncludingGrouping(data.grouping),
     ...data.grouping.recordsRequestParams(),
     ...data.filtering.recordsRequestParams(),
+    ...data.searchFuzzy.recordsRequestParams(),
   };
   const entries: [string, string][] = Object.entries(params).map(([k, v]) => {
     const value = typeof v === 'string' ? v : JSON.stringify(v);
@@ -47,89 +64,160 @@ function buildFetchQueryString(data: RecordsRequestParamsData): string {
   return new URLSearchParams(entries).toString();
 }
 
-export interface Group {
+export interface RecordGroup {
   count: number;
-  firstValue: ResultValue;
-  lastValue: ResultValue;
+  eqValue: ApiGroup['eq_value'];
+  firstValue: ApiGroup['first_value'];
+  lastValue: ApiGroup['last_value'];
   resultIndices: number[];
 }
 
-export interface Grouping {
+export interface RecordGrouping {
   columnIds: number[];
+  preprocIds: (string | null)[];
   mode: GroupingMode;
-  groups: Group[];
+  groups: RecordGroup[];
 }
 
-function buildGroup(apiGroup: ApiGroup): Group {
+function buildGroup(apiGroup: ApiGroup): RecordGroup {
   return {
     count: apiGroup.count,
+    eqValue: apiGroup.eq_value,
     firstValue: apiGroup.first_value,
     lastValue: apiGroup.last_value,
     resultIndices: apiGroup.result_indices,
   };
 }
 
-function buildGrouping(apiGrouping: ApiGrouping): Grouping {
+function buildGrouping(apiGrouping: ApiGrouping): RecordGrouping {
   return {
     columnIds: apiGrouping.columns,
+    preprocIds: apiGrouping.preproc ?? [],
     mode: apiGrouping.mode,
     groups: apiGrouping.groups.map(buildGroup),
   };
 }
 
-export interface Row {
-  /**
-   * Can be `undefined` because some rows don't have an associated record, e.g.
-   * group headers, dummy rows, etc.
-   */
-  record?: ApiRecord;
+interface BaseRow {
   identifier: string;
-  isAddPlaceholder?: boolean;
-  isNew?: boolean;
-  isNewHelpText?: boolean;
-  isGroupHeader?: boolean;
-  group?: Group;
-  rowIndex?: number;
-  state?: string;
-  groupValues?: Record<string, unknown>;
+}
+
+export interface RecordRow extends BaseRow {
+  rowIndex: number;
+  record: ApiRecord;
+}
+
+export interface NewRecordRow extends RecordRow {
+  isNew: true;
+}
+
+export interface GroupHeaderRow extends BaseRow {
+  group: RecordGroup;
+  groupValues: ApiGroup['first_value'];
+}
+
+export interface HelpTextRow extends BaseRow {
+  isNewHelpText: true;
+}
+
+export interface PlaceholderRow extends NewRecordRow {
+  isAddPlaceholder: true;
+}
+
+export type Row =
+  | RecordRow
+  | NewRecordRow
+  | GroupHeaderRow
+  | HelpTextRow
+  | PlaceholderRow;
+
+export function rowHasRecord(
+  row: Row,
+): row is RecordRow | NewRecordRow | PlaceholderRow {
+  return 'record' in row;
+}
+
+export function rowHasNewRecord(
+  row: Row,
+): row is NewRecordRow | PlaceholderRow {
+  return 'record' in row && 'isNew' in row && row.isNew;
+}
+
+export function isHelpTextRow(row: Row): row is HelpTextRow {
+  return 'isNewHelpText' in row;
+}
+
+export function isGroupHeaderRow(row: Row): row is GroupHeaderRow {
+  return 'group' in row;
+}
+
+export function isPlaceholderRow(row: Row): row is PlaceholderRow {
+  return 'isAddPlaceholder' in row;
+}
+
+export function isNewRecordRow(row: Row): row is NewRecordRow {
+  return rowHasNewRecord(row) && !isPlaceholderRow(row);
+}
+
+export function filterRecordRows(rows: Row[]): RecordRow[] {
+  return rows.filter((row): row is RecordRow => rowHasRecord(row));
+}
+
+export function rowHasSavedRecord(row: Row): row is RecordRow {
+  return rowHasRecord(row) && Object.entries(row.record).length > 0;
 }
 
 export interface TableRecordsData {
   state: States;
   error?: string;
-  savedRecords: Row[];
+  savedRecordRowsWithGroupHeaders: Row[];
   totalCount: number;
-  grouping?: Grouping;
+  grouping?: RecordGrouping;
 }
 
-export function getRowKey(
-  row: Row,
-  primaryKeyColumnId?: Column['id'],
-): unknown {
-  // @ts-ignore: https://github.com/centerofci/mathesar/issues/1055
-  let key: unknown = row.record?.[primaryKeyColumnId];
-  if (!key && row?.isNew) {
-    key = row?.identifier;
+export function getRowKey(row: Row, primaryKeyColumnId?: Column['id']): string {
+  if (rowHasRecord(row) && primaryKeyColumnId !== undefined) {
+    const primaryKeyCellValue = row.record[primaryKeyColumnId];
+    if (isDefinedNonNullable(primaryKeyCellValue)) {
+      return String(primaryKeyCellValue);
+    }
   }
-  return key;
+  return row.identifier;
+}
+
+export function getPkValueInRecord(
+  record: ApiRecord,
+  columns: Column[],
+): string | number {
+  const pkColumn = columns.find((c) => c.primary_key);
+  if (!pkColumn) {
+    throw new Error('No primary key column found.');
+  }
+  const pkValue = record[pkColumn.id];
+  if (!(typeof pkValue === 'string' || typeof pkValue === 'number')) {
+    throw new Error('Primary key value is not a string or number.');
+  }
+  return pkValue;
 }
 
 function generateRowIdentifier(
   type: 'groupHeader' | 'normal' | 'dummy' | 'new',
   offset: number,
-  index: number,
+  reference: number | string,
 ): string {
-  return `__${offset}_${type}_${index}`;
+  return `__${offset}_${type}_${reference}`;
 }
 
-function getRecordIndexToGroupMap(groups: Group[]): Map<number, Group> {
-  const map = new Map<number, Group>();
-  groups.forEach((group) => {
-    group.resultIndices.forEach((resultIndex) => {
-      map.set(resultIndex, group);
-    });
-  });
-  return map;
+function getProcessedRecordRow(
+  record: ApiRecord,
+  recordIndex: number,
+  offset: number,
+): RecordRow {
+  return {
+    record,
+    identifier: generateRowIdentifier('normal', offset, recordIndex),
+    rowIndex: recordIndex,
+  };
 }
 
 function preprocessRecords({
@@ -139,66 +227,46 @@ function preprocessRecords({
 }: {
   records: ApiRecord[];
   offset: number;
-  grouping?: Grouping;
-}): Row[] {
+  grouping?: RecordGrouping;
+}): (RecordRow | GroupHeaderRow)[] {
   const groupingColumnIds = grouping?.columnIds ?? [];
   const isResultGrouped = groupingColumnIds.length > 0;
-  const combinedRecords: Row[] = [];
-  let index = 0;
-  let groupIndex = 0;
-  let existingRecordIndex = 0;
 
-  const recordIndexToGroupMap = getRecordIndexToGroupMap(
-    grouping?.groups ?? [],
-  );
+  if (isResultGrouped) {
+    const combinedRecords: (RecordRow | GroupHeaderRow)[] = [];
+    let recordIndex = 0;
 
-  records?.forEach((record) => {
-    if (isResultGrouped) {
-      let isGroup = false;
-      if (index === 0) {
-        isGroup = true;
-      } else {
-        // eslint-disable-next-line no-restricted-syntax
-        for (const id of groupingColumnIds) {
-          if (records[index - 1][id] !== records[index][id]) {
-            isGroup = true;
-            break;
-          }
+    grouping?.groups.forEach((group, groupIndex) => {
+      const groupValues: ApiRecord = {};
+      grouping.columnIds.forEach((columnId) => {
+        if (group.eqValue[columnId] !== undefined) {
+          groupValues[columnId] = group.eqValue[columnId];
+        } else {
+          groupValues[columnId] = group.firstValue[columnId];
         }
-      }
-
-      if (isGroup) {
-        combinedRecords.push({
-          record,
-          isGroupHeader: true,
-          group: recordIndexToGroupMap.get(index),
-          identifier: generateRowIdentifier('groupHeader', offset, groupIndex),
-          groupValues: record,
-          state: 'done',
-        });
-        groupIndex += 1;
-      }
-    }
-
-    combinedRecords.push({
-      record,
-      identifier: generateRowIdentifier('normal', offset, existingRecordIndex),
-      rowIndex: index,
-      state: 'done',
+      });
+      combinedRecords.push({
+        group,
+        identifier: generateRowIdentifier('groupHeader', offset, groupIndex),
+        groupValues,
+      });
+      group.resultIndices.forEach((resultIndex) => {
+        const record = records[resultIndex];
+        combinedRecords.push(
+          getProcessedRecordRow(record, recordIndex, offset),
+        );
+        recordIndex += 1;
+      });
     });
-    index += 1;
-    existingRecordIndex += 1;
-  });
-  return combinedRecords;
-}
+    return combinedRecords;
+  }
 
-function prepareRowForRequest(row: Row): ApiRecord {
-  return row.record ?? {};
+  return records.map((record, index) =>
+    getProcessedRecordRow(record, index, offset),
+  );
 }
 
 export class RecordsData {
-  private type: TabularType;
-
   private parentId: DBObjectEntry['id'];
 
   private url: string;
@@ -209,11 +277,15 @@ export class RecordsData {
 
   state: Writable<States>;
 
-  savedRecords: Writable<Row[]>;
+  savedRecords: Readable<RecordRow[]>;
 
-  newRecords: Writable<Row[]>;
+  savedRecordRowsWithGroupHeaders: Writable<(RecordRow | GroupHeaderRow)[]>;
 
-  grouping: Writable<Grouping | undefined>;
+  newRecords: Writable<NewRecordRow[]>;
+
+  recordSummaries = new RecordSummaryStore();
+
+  grouping: Writable<RecordGrouping | undefined>;
 
   totalCount: Writable<number | undefined>;
 
@@ -231,30 +303,38 @@ export class RecordsData {
 
   private requestParamsUnsubscriber: Unsubscriber;
 
-  private columnPatchUnsubscriber: () => void;
+  /**
+   * This maps column ids to cell values. It is used to supply default values
+   * for the cells within hidden columns when creating new records.
+   */
+  private contextualFilters: Map<number, number | string>;
 
   constructor(
-    type: TabularType,
     parentId: number,
     meta: Meta,
     columnsDataStore: ColumnsDataStore,
-    fetchCallback?: (storeData: TableRecordsData) => void,
+    contextualFilters: Map<number, number | string>,
   ) {
-    this.type = type;
     this.parentId = parentId;
 
     this.state = writable(States.Loading);
-    this.savedRecords = writable([]);
+    this.savedRecordRowsWithGroupHeaders = writable([]);
     this.newRecords = writable([]);
+    this.savedRecords = derived(
+      this.savedRecordRowsWithGroupHeaders,
+      ($savedRecordRowsWithGroupHeaders) =>
+        $savedRecordRowsWithGroupHeaders.filter(
+          (row): row is RecordRow => !isGroupHeaderRow(row),
+        ),
+    );
     this.grouping = writable(undefined);
     this.totalCount = writable(undefined);
     this.error = writable(undefined);
 
     this.meta = meta;
     this.columnsDataStore = columnsDataStore;
-    const tabularEntity = this.type === TabularType.Table ? 'tables' : 'views';
-    this.url = `/api/db/v0/${tabularEntity}/${this.parentId}/records/`;
-    this.fetchCallback = fetchCallback;
+    this.contextualFilters = contextualFilters;
+    this.url = `/api/db/v0/tables/${this.parentId}/records/`;
     void this.fetch();
 
     // TODO: Create base class to abstract subscriptions and unsubscriptions
@@ -262,21 +342,17 @@ export class RecordsData {
       this.meta.recordsRequestParamsData.subscribe(() => {
         void this.fetch();
       });
-    this.columnPatchUnsubscriber = this.columnsDataStore.on(
-      'columnPatched',
-      () => this.fetch(),
-    );
   }
 
   async fetch(
     retainExistingRows = false,
   ): Promise<TableRecordsData | undefined> {
     this.promise?.cancel();
-    const { offset } = getStoreValue(this.meta.pagination);
+    const { offset } = get(this.meta.pagination);
 
-    this.savedRecords.update((existingData) => {
+    this.savedRecordRowsWithGroupHeaders.update((existingData) => {
       let data = [...existingData];
-      data.length = getStoreValue(this.meta.pagination).size;
+      data.length = Math.min(data.length, get(this.meta.pagination).size);
 
       let index = -1;
       data = data.map((entry) => {
@@ -295,33 +371,45 @@ export class RecordsData {
       return data;
     });
     this.error.set(undefined);
-    this.state.set(States.Loading);
     if (!retainExistingRows) {
+      this.state.set(States.Loading);
       this.newRecords.set([]);
-      this.meta.clearAllRecordModificationStates();
+      this.meta.clearAllStatusesAndErrors();
     }
 
     try {
-      const params = getStoreValue(this.meta.recordsRequestParamsData);
-      const queryString = buildFetchQueryString(params);
+      const params = get(this.meta.recordsRequestParamsData);
+      const contextualFilterEntries = [...this.contextualFilters].map(
+        ([columnId, value]) => ({ columnId, conditionId: 'equal', value }),
+      );
+      const queryString = buildFetchQueryString({
+        ...params,
+        filtering: params.filtering.withEntries(contextualFilterEntries),
+      });
       this.promise = getAPI<ApiRecordsResponse>(`${this.url}?${queryString}`);
       const response = await this.promise;
       const totalCount = response.count || 0;
       const grouping = response.grouping
         ? buildGrouping(response.grouping)
         : undefined;
+      if (response.preview_data) {
+        this.recordSummaries.setFetchedSummaries(
+          buildRecordSummariesForSheet(response.preview_data),
+        );
+      }
       const records = preprocessRecords({
         records: response.results,
         offset,
         grouping,
       });
+
       const tableRecordsData: TableRecordsData = {
         state: States.Done,
-        savedRecords: records,
+        savedRecordRowsWithGroupHeaders: records,
         grouping,
         totalCount,
       };
-      this.savedRecords.set(records);
+      this.savedRecordRowsWithGroupHeaders.set(records);
       this.state.set(States.Done);
       this.grouping.set(grouping);
       this.totalCount.set(totalCount);
@@ -337,102 +425,110 @@ export class RecordsData {
     return undefined;
   }
 
-  async deleteSelected(): Promise<void> {
-    const pkSet = getStoreValue(this.meta.selectedRecords);
+  async deleteSelected(selectedRowIndices: number[]): Promise<void> {
+    const recordRows = this.getRecordRows();
+    const pkColumn = get(this.columnsDataStore.pkColumn);
+    const primaryKeysOfSavedRows: string[] = [];
+    const identifiersOfUnsavedRows: string[] = [];
+    selectedRowIndices.forEach((index) => {
+      const row = recordRows[index];
+      if (row) {
+        const rowKey = getRowKey(row, pkColumn?.id);
+        if (pkColumn?.id && isDefinedNonNullable(row.record[pkColumn?.id])) {
+          primaryKeysOfSavedRows.push(rowKey);
+        } else {
+          identifiersOfUnsavedRows.push(rowKey);
+        }
+      }
+    });
+    const rowKeys = [...primaryKeysOfSavedRows, ...identifiersOfUnsavedRows];
 
-    if (pkSet.size > 0) {
-      this.meta.setMultipleRecordModificationStates([...pkSet], 'delete');
+    if (rowKeys.length > 0) {
+      this.meta.rowDeletionStatus.setMultiple(rowKeys, { state: 'processing' });
 
-      try {
-        const successSet: Set<unknown> = new Set();
-        const failed: unknown[] = [];
+      const successRowKeys = new Set<RowKey>();
+      /** Values are error messages */
+      const failures = new Map<RowKey, string>();
+
+      if (identifiersOfUnsavedRows.length > 0) {
+        identifiersOfUnsavedRows.forEach((identifier) =>
+          successRowKeys.add(identifier),
+        );
+      }
+      if (primaryKeysOfSavedRows.length > 0) {
         // TODO: Convert this to single request
-        const promises = [...pkSet].map((pk) =>
-          deleteAPI<unknown>(`${this.url}${pk as string}/`)
+        const promises = primaryKeysOfSavedRows.map((pk) =>
+          deleteAPI<RowKey>(`${this.url}${pk}/`)
             .then(() => {
-              successSet.add(pk);
-              return successSet;
+              successRowKeys.add(pk);
+              return successRowKeys;
             })
-            .catch(() => {
-              failed.push(pk);
-              return failed;
+            .catch((error: unknown) => {
+              failures.set(pk, getErrorMessage(error));
+              return failures;
             }),
         );
         await Promise.all(promises);
         await this.fetch(true);
-
-        const { offset } = getStoreValue(this.meta.pagination);
-        const savedRecords = getStoreValue(this.savedRecords);
-        const savedRecordsLength = savedRecords?.length || 0;
-
-        this.newRecords.update((existing) => {
-          let retained = existing.filter(
-            (entry) =>
-              !successSet.has(
-                getRowKey(
-                  entry,
-                  this.columnsDataStore.get()?.primaryKeyColumnId,
-                ),
-              ),
-          );
-          if (retained.length === existing.length) {
-            return existing;
-          }
-          let index = -1;
-          retained = retained.map((entry) => {
-            index += 1;
-            return {
-              ...entry,
-              rowIndex: savedRecordsLength + index,
-              identifier: generateRowIdentifier('new', offset, index),
-            };
-          });
-          return retained;
-        });
-        this.meta.clearMultipleRecordModificationStates([...successSet]);
-        this.meta.setMultipleRecordModificationStates(failed, 'deleteFailed');
-      } catch (err) {
-        this.meta.setMultipleRecordModificationStates(
-          [...pkSet],
-          'deleteFailed',
-        );
-      } finally {
-        this.meta.clearSelectedRecords();
       }
+
+      const savedRecords = get(this.savedRecords);
+      const savedRecordsLength = savedRecords.length;
+      const savedRecordKeys = new Set(
+        savedRecords.map((row) => getRowKey(row, pkColumn?.id)),
+      );
+
+      this.newRecords.update((existing) => {
+        const retained = existing.filter((row) => {
+          const rowKey = getRowKey(row, pkColumn?.id);
+          return !successRowKeys.has(rowKey) && !savedRecordKeys.has(rowKey);
+        });
+        if (retained.length === existing.length) {
+          return existing;
+        }
+        return retained.map((row, index) => ({
+          ...row,
+          rowIndex: savedRecordsLength + index,
+        }));
+      });
+      this.meta.rowCreationStatus.delete([...savedRecordKeys]);
+      this.meta.clearAllStatusesAndErrorsForRows([...successRowKeys]);
+      this.meta.rowDeletionStatus.setEntries(
+        [...failures.entries()].map(([rowKey, errorMsg]) => [
+          rowKey,
+          { state: 'failure', errors: [errorMsg] },
+        ]),
+      );
     }
   }
 
-  /**
-   * TODO:
-   * - Handle states where cell update and row update happen in parallel
-   * - Reduce code duplication between `updateCell` and `updateRecord`
-   */
-  async updateCell(row: Row, column: Column): Promise<void> {
+  // TODO: It would be better to throw errors instead of silently failing
+  // and returning a value.
+  async updateCell(
+    row: RecordRow | NewRecordRow | PlaceholderRow,
+    column: Column,
+  ): Promise<RecordRow> {
+    // TODO compute and validate client side errors before saving
     const { record } = row;
-    if (!record) {
-      console.error('Unable to update row that does not have a record');
-      return;
-    }
-    const { primaryKeyColumnId } = this.columnsDataStore.get();
-    if (!primaryKeyColumnId) {
+    const pkColumn = get(this.columnsDataStore.pkColumn);
+    if (pkColumn === undefined) {
       // eslint-disable-next-line no-console
       console.error('Unable to update record for a row without a primary key');
-      return;
+      return row;
     }
-    const primaryKeyValue = record[primaryKeyColumnId];
+    const primaryKeyValue = record[pkColumn.id];
     if (primaryKeyValue === undefined) {
       // eslint-disable-next-line no-console
       console.error(
         'Unable to update record for a row with a missing primary key value',
       );
-      return;
+      return row;
     }
-    const rowKey = getRowKey(row, primaryKeyColumnId);
-    const rowKeyString = String(rowKey);
-    const cellKey = `${rowKeyString}::${column.id}`;
-    this.meta.setCellUpdateState(rowKey, cellKey, 'update');
+    const rowKey = getRowKey(row, pkColumn.id);
+    const cellKey = getCellKey(rowKey, column.id);
+    this.meta.cellModificationStatus.set(cellKey, { state: 'processing' });
     this.updatePromises?.get(cellKey)?.cancel();
-    const promise = patchAPI<unknown>(
+    const promise = patchAPI<ApiRecordsResponse>(
       `${this.url}${String(primaryKeyValue)}/`,
       { [column.id]: record[column.id] },
     );
@@ -442,106 +538,91 @@ export class RecordsData {
     this.updatePromises.set(cellKey, promise);
 
     try {
-      await promise;
-      this.meta.setCellUpdateState(rowKey, cellKey, 'updated');
+      const result = await promise;
+      this.meta.cellModificationStatus.set(cellKey, { state: 'success' });
+      return {
+        ...row,
+        record: result.results[0],
+      };
     } catch (err) {
-      this.meta.setCellUpdateState(rowKey, cellKey, 'updateFailed');
+      this.meta.cellModificationStatus.set(cellKey, {
+        state: 'failure',
+        errors: [`Unable to save cell. ${getErrorMessage(err)}`],
+      });
     } finally {
       if (this.updatePromises.get(cellKey) === promise) {
         this.updatePromises.delete(cellKey);
       }
     }
+    return row;
   }
 
-  /**
-   * TODO:
-   * - Reduce code duplication between `updateCell` and `updateRecord`
-   */
-  async updateRecord(row: Row): Promise<void> {
-    const { record } = row;
-    if (!record) {
-      console.error('Unable to update row that does not have a record');
-      return;
-    }
-    const { primaryKeyColumnId } = this.columnsDataStore.get();
-    if (!primaryKeyColumnId) {
-      // eslint-disable-next-line no-console
-      console.error('Unable to update record for a row without a primary key');
-      return;
-    }
-    const primaryKeyValue = record[primaryKeyColumnId];
-    if (primaryKeyValue === undefined) {
-      // eslint-disable-next-line no-console
-      console.error(
-        'Unable to update record for a row with a missing primary key value',
-      );
-      return;
-    }
-    const rowKey = getRowKey(row, primaryKeyColumnId);
-    this.meta.setRecordModificationState(rowKey, 'update');
-    this.updatePromises?.get(rowKey)?.cancel();
-    const promise = patchAPI<unknown>(
-      `${this.url}${String(primaryKeyValue)}/`,
-      prepareRowForRequest(row),
-    );
-    if (!this.updatePromises) {
-      this.updatePromises = new Map();
-    }
-    this.updatePromises.set(rowKey, promise);
-
-    try {
-      await promise;
-      this.meta.setRecordModificationState(rowKey, 'updated');
-    } catch (err) {
-      this.meta.setRecordModificationState(rowKey, 'updateFailed');
-    } finally {
-      if (this.updatePromises.get(rowKey) === promise) {
-        this.updatePromises.delete(rowKey);
-      }
-    }
-  }
-
-  getNewEmptyRecord(): Row {
-    const { offset } = getStoreValue(this.meta.pagination);
-    const savedRecords = getStoreValue(this.savedRecords);
-    const savedRecordsLength = savedRecords?.length || 0;
-    const existingNewRecords = getStoreValue(this.newRecords);
+  getNewEmptyRecord(): NewRecordRow {
+    const { offset } = get(this.meta.pagination);
+    const existingRecordRows = this.getRecordRows();
     const identifier = generateRowIdentifier(
       'new',
       offset,
-      existingNewRecords.length,
+      getGloballyUniqueId(),
     );
-    const newRecord: Row = {
-      record: {},
+    const record = Object.fromEntries(
+      get(this.columnsDataStore.columns)
+        .filter((column) => column.default === null)
+        .map((column) => [String(column.id), null]),
+    );
+    const newRow: Row = {
+      record,
       identifier,
-      state: States.Done,
       isNew: true,
-      rowIndex: existingNewRecords.length + savedRecordsLength,
+      rowIndex: existingRecordRows.length,
     };
-    return newRecord;
+    return newRow;
   }
 
-  async createRecord(row: Row): Promise<void> {
-    const { primaryKeyColumnId: primaryKey } = this.columnsDataStore.get();
-    const rowKey = getRowKey(row, primaryKey);
-    this.meta.setRecordModificationState(rowKey, 'create');
-    this.createPromises?.get(rowKey)?.cancel();
-    const promise = postAPI<ApiRecord>(this.url, prepareRowForRequest(row));
+  private async createRecord(
+    row: NewRecordRow | PlaceholderRow,
+  ): Promise<NewRecordRow> {
+    const pkColumn = get(this.columnsDataStore.pkColumn);
+    const columns = get(this.columnsDataStore.columns);
+    const rowKey = getRowKey(row, pkColumn?.id);
+    validateRow({
+      row,
+      rowKey,
+      columns,
+      cellClientSideErrors: this.meta.cellClientSideErrors,
+    });
+    if (get(this.meta.rowsWithClientSideErrors).has(rowKey)) {
+      return row;
+    }
+
+    const rowKeyOfBlankRow = getRowKey(row, pkColumn?.id);
+    this.meta.rowCreationStatus.set(rowKeyOfBlankRow, { state: 'processing' });
+    this.createPromises?.get(rowKeyOfBlankRow)?.cancel();
+    const requestRecord = {
+      ...Object.fromEntries(this.contextualFilters),
+      ...row.record,
+    };
+    const promise = postAPI<ApiRecordsResponse>(this.url, requestRecord);
     if (!this.createPromises) {
       this.createPromises = new Map();
     }
-    this.createPromises.set(rowKey, promise);
+    this.createPromises.set(rowKeyOfBlankRow, promise);
 
     try {
-      const record = await promise;
-      const newRow: Row = {
+      const response = await promise;
+      const record = response.results[0];
+      let newRow: NewRecordRow = {
         ...row,
         record,
-        isAddPlaceholder: false,
       };
-      const updatedRowKey = getRowKey(newRow, primaryKey);
-      this.meta.clearRecordModificationState(rowKey);
-      this.meta.setRecordModificationState(updatedRowKey, 'created');
+      if (isPlaceholderRow(newRow)) {
+        const { isAddPlaceholder, ...newRecordRow } = newRow;
+        newRow = newRecordRow;
+      }
+
+      const rowKeyWithRecord = getRowKey(newRow, pkColumn?.id);
+      this.meta.rowCreationStatus.delete(rowKeyOfBlankRow);
+      this.meta.rowCreationStatus.set(rowKeyWithRecord, { state: 'success' });
       this.newRecords.update((existing) =>
         existing.map((entry) => {
           if (entry.identifier === row.identifier) {
@@ -551,65 +632,60 @@ export class RecordsData {
         }),
       );
       this.totalCount.update((count) => (count ?? 0) + 1);
+      return newRow;
     } catch (err) {
-      this.meta.setRecordModificationState(rowKey, 'creationFailed');
+      this.meta.rowCreationStatus.set(rowKeyOfBlankRow, {
+        state: 'failure',
+        errors: [getErrorMessage(err)],
+      });
     } finally {
-      if (this.createPromises.get(rowKey) === promise) {
-        this.createPromises.delete(rowKey);
+      if (this.createPromises.get(rowKeyOfBlankRow) === promise) {
+        this.createPromises.delete(rowKeyOfBlankRow);
       }
     }
+    return row;
   }
 
-  async createOrUpdateRecord(row: Row, column?: Column): Promise<void> {
-    const { primaryKeyColumnId } = this.columnsDataStore.get();
+  async createOrUpdateRecord(
+    row: RecordRow | NewRecordRow | PlaceholderRow,
+    column: Column,
+  ): Promise<RecordRow | NewRecordRow> {
+    const pkColumn = get(this.columnsDataStore.pkColumn);
 
     // Row may not have been updated yet in view when additional request is made.
     // So check current values to ensure another row has not been created.
-    const existingNewRecordRow = getStoreValue(this.newRecords).find(
+    const existingNewRecordRow = get(this.newRecords).find(
       (entry) => entry.identifier === row.identifier,
     );
 
-    if (!existingNewRecordRow && row.isAddPlaceholder) {
+    if (!existingNewRecordRow && isPlaceholderRow(row)) {
       this.newRecords.update((existing) => {
-        existing.push({
-          ...row,
-          isAddPlaceholder: false,
-        });
-        return existing;
+        const { isAddPlaceholder: unused, ...newRow } = row;
+        return [...existing, newRow];
       });
     }
 
+    let result: RecordRow;
     if (
-      primaryKeyColumnId &&
-      !existingNewRecordRow?.record?.[primaryKeyColumnId] &&
-      row.isNew &&
-      !row.record?.[primaryKeyColumnId]
+      pkColumn?.id &&
+      rowHasNewRecord(row) &&
+      row.record[pkColumn?.id] === undefined
     ) {
-      await this.createRecord(row);
-    } else if (column) {
-      await this.updateCell(row, column);
+      result = await this.createRecord(row);
     } else {
-      await this.updateRecord(row);
+      result = await this.updateCell(row, column);
     }
+    return result;
   }
 
   async addEmptyRecord(): Promise<void> {
-    const newRecord = this.getNewEmptyRecord();
-    this.newRecords.update((existing) => existing.concat(newRecord));
-    await this.createRecord(newRecord);
+    const row = this.getNewEmptyRecord();
+    this.newRecords.update((existing) => existing.concat(row));
+    await this.createRecord(row);
   }
 
-  getIterationKey(index: number): string {
-    const savedRecords = getStoreValue(this.savedRecords);
-    if (savedRecords?.[index]) {
-      return savedRecords[index].identifier;
-    }
-    const savedLength = savedRecords?.length || 0;
-    const newRecordsData = getStoreValue(this.newRecords);
-    if (newRecordsData?.[index + savedLength]) {
-      return newRecordsData[index + savedLength].identifier;
-    }
-    return `__index_${index}`;
+  getRecordRows(): RecordRow[] {
+    return [...get(this.savedRecords), ...get(this.newRecords)];
   }
 
   destroy(): void {
@@ -617,6 +693,5 @@ export class RecordsData {
     this.promise = undefined;
 
     this.requestParamsUnsubscriber();
-    this.columnPatchUnsubscriber();
   }
 }

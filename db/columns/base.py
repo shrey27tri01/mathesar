@@ -6,8 +6,11 @@ from db.columns.operations.select import (
 )
 from db.tables.operations.select import get_oid_from_table
 from db.types.operations.cast import get_full_cast_map
+from db.types.operations.convert import get_db_type_enum_from_class
 
 
+# TODO consider renaming to DbColumn or DatabaseColumn
+# We are attempting to reserve the term Mathesar for types in the mathesar namespace.
 class MathesarColumn(Column):
     """
     This class constrains the possible arguments, enabling us to include
@@ -21,11 +24,12 @@ class MathesarColumn(Column):
             self,
             name,
             sa_type,
-            foreign_keys=set(),
+            foreign_keys=None,
             primary_key=False,
             nullable=True,
             autoincrement=False,
             server_default=None,
+            engine=None,
     ):
         """
         Construct a new ``MathesarColumn`` object.
@@ -39,7 +43,9 @@ class MathesarColumn(Column):
         nullable -- Boolean giving whether the column is nullable.
         server_default -- String or DefaultClause giving the default value
         """
-        self.engine = None
+        if foreign_keys is None:
+            foreign_keys = set()
+        self.engine = engine
         super().__init__(
             *foreign_keys,
             name=name,
@@ -49,26 +55,63 @@ class MathesarColumn(Column):
             autoincrement=autoincrement,
             server_default=server_default
         )
+        # NOTE: For some reason, sometimes `self._proxies` is a tuple. SA expects it to be
+        # appendable, however. Was not able to track down the source of it. As a workaround, we
+        # convert it into a list here. I (Dom) offer a bounty of bragging rights to anyone who
+        # figures out what's causing `_proxies` to be tuples.
+        if isinstance(self._proxies, tuple):
+            self._proxies = list(self._proxies)
 
     @classmethod
-    def from_column(cls, column):
+    def _constructor(cls, *args, **kwargs):
+        """
+        Needed to support Column.copy().
+
+        See https://docs.sqlalchemy.org/en/14/changelog/changelog_07.html?highlight=_constructor#change-de8c32a6729c83da17177f6a13979717
+        """
+        return MathesarColumn.from_column(
+            Column(*args, **kwargs)
+        )
+
+    @classmethod
+    def from_column(cls, column, engine=None):
         """
         This alternate init method creates a new column (a copy) of the
         given column.  It respects only the properties in the __init__
         of the MathesarColumn.
         """
-        fkeys = {ForeignKey(fk.target_fullname) for fk in column.foreign_keys}
-        new_column = cls(
-            column.name,
-            column.type,
-            foreign_keys=fkeys,
-            primary_key=column.primary_key,
-            nullable=column.nullable,
-            autoincrement=column.autoincrement,
-            server_default=column.server_default,
-        )
-        new_column.original_table = column.table
+        try:
+            fkeys = {ForeignKey(fk.target_fullname) for fk in column.foreign_keys}
+            new_column = cls(
+                column.name,
+                column.type,
+                foreign_keys=fkeys,
+                primary_key=column.primary_key,
+                nullable=column.nullable,
+                autoincrement=column.autoincrement,
+                server_default=column.server_default,
+                engine=engine,
+            )
+            new_column.original_table = column.table
+        # dirty hack to handle cases where this isn't a real column
+        except AttributeError:
+            new_column = cls(
+                column.name,
+                column.type,
+                engine=engine,
+            )
         return new_column
+
+    def to_sa_column(self):
+        """
+        MathesarColumn sometimes is not interchangeable with SQLAlchemy's Column.
+        For use in those situations, this method attempts to recreate an SA Column.
+
+        NOTE: this method is incomplete: it does not account for all properties of MathesarColumn.
+        """
+        sa_column = Column(name=self.name, type_=self.type)
+        sa_column.table = self.table_
+        return sa_column
 
     @property
     def table_(self):
@@ -111,14 +154,19 @@ class MathesarColumn(Column):
         Returns a set of valid types to which the type of the column can be
         altered.
         """
-        if self.engine is not None and not self.is_default:
-            db_type = self.plain_type
+        if (
+            self.engine is not None
+            and not self.is_default
+            and self.db_type is not None
+        ):
+            db_type = self.db_type
             valid_target_types = sorted(
                 list(
                     set(
                         get_full_cast_map(self.engine).get(db_type, [])
                     )
-                )
+                ),
+                key=lambda db_type: db_type.id
             )
             return valid_target_types if valid_target_types else None
 
@@ -130,20 +178,28 @@ class MathesarColumn(Column):
         """
         engine_exists = self.engine is not None
         table_exists = self.table_ is not None
-        engine_has_table = inspect(self.engine).has_table(self.table_.name, schema=self.table_.schema)
+        # TODO are we checking here that the table exists on the database? explain why we have to do
+        # that.
+        engine_has_table = inspect(self.engine).has_table(
+            self.table_.name,
+            schema=self.table_.schema,
+        )
         if engine_exists and table_exists and engine_has_table:
+            metadata = self.table_.metadata
             return get_column_attnum_from_name(
                 self.table_oid,
                 self.name,
-                self.engine
+                self.engine,
+                metadata=metadata,
             )
 
     @property
     def column_default_dict(self):
         if self.table_ is None:
             return
+        metadata = self.table_.metadata
         default_dict = get_column_default_dict(
-            self.table_oid, self.column_attnum, self.engine
+            self.table_oid, self.column_attnum, self.engine, metadata=metadata,
         )
         if default_dict:
             return {
@@ -154,22 +210,40 @@ class MathesarColumn(Column):
     @property
     def default_value(self):
         if self.table_ is not None:
-            return get_column_default(self.table_oid, self.column_attnum, self.engine)
+            metadata = self.table_.metadata
+            return get_column_default(
+                self.table_oid,
+                self.column_attnum,
+                self.engine,
+                metadata=metadata,
+            )
 
     @property
-    def plain_type(self):
+    def db_type(self):
         """
-        Get the type name without arguments
+        Get this column's database type enum.
         """
-        return self.type.__class__().compile(self.engine.dialect)
+        self._assert_that_engine_is_present()
+        return get_db_type_enum_from_class(self.type.__class__)
 
     @property
     def type_options(self):
+        item_type = getattr(self.type, "item_type", None)
+        if item_type is not None:
+            item_type_name = get_db_type_enum_from_class(item_type.__class__).id
+        else:
+            item_type_name = None
         full_type_options = {
             "length": getattr(self.type, "length", None),
             "precision": getattr(self.type, "precision", None),
             "scale": getattr(self.type, "scale", None),
             "fields": getattr(self.type, "fields", None),
+            "item_type": item_type_name,
+            "dimensions": getattr(self.type, "dimensions", None)
         }
         _type_options = {k: v for k, v in full_type_options.items() if v is not None}
         return _type_options if _type_options else None
+
+    def _assert_that_engine_is_present(self):
+        if self.engine is None:
+            raise Exception("Engine should not be None.")

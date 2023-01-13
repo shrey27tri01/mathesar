@@ -8,10 +8,10 @@ import {
   patchAPI,
   postAPI,
   States,
-} from '@mathesar/utils/api';
-import type { PaginatedResponse } from '@mathesar/utils/api';
+} from '@mathesar/api/utils/requestUtils';
+import type { PaginatedResponse } from '@mathesar/api/utils/requestUtils';
 
-import type { Database, SchemaEntry, SchemaResponse } from '@mathesar/App.d';
+import type { Database, SchemaEntry, SchemaResponse } from '@mathesar/AppTypes';
 import type { CancellablePromise } from '@mathesar-component-library';
 
 import { currentDBName } from './databases';
@@ -19,7 +19,7 @@ import { currentDBName } from './databases';
 const commonData = preloadCommonData();
 
 export const currentSchemaId: Writable<SchemaEntry['id'] | undefined> =
-  writable(commonData?.current_schema || undefined);
+  writable(commonData?.current_schema ?? undefined);
 
 export interface DBSchemaStoreData {
   state: States;
@@ -70,6 +70,7 @@ function updateSchemaInDBSchemaStore(
       value.data?.set(schema.id, schema);
       return {
         ...value,
+        data: new Map(value.data),
       };
     });
   }
@@ -85,6 +86,7 @@ function removeSchemaInDBSchemaStore(
       value.data?.delete(schemaId);
       return {
         ...value,
+        data: new Map(value.data),
       };
     });
   }
@@ -190,9 +192,11 @@ export function getSchemaInfo(
 export async function createSchema(
   database: Database['name'],
   schemaName: SchemaEntry['name'],
+  schemaDescription: SchemaEntry['description'],
 ): Promise<SchemaResponse> {
   const response = await postAPI<SchemaResponse>('/api/db/v0/schemas/', {
     name: schemaName,
+    description: schemaDescription,
     database,
   });
   updateSchemaInDBSchemaStore(database, response);
@@ -204,7 +208,10 @@ export async function updateSchema(
   schema: SchemaEntry,
 ): Promise<SchemaResponse> {
   const url = `/api/db/v0/schemas/${schema.id}/`;
-  const response = await patchAPI<SchemaResponse>(url, { name: schema.name });
+  const response = await patchAPI<SchemaResponse>(url, {
+    name: schema.name,
+    description: schema.description,
+  });
   updateSchemaInDBSchemaStore(database, response);
   return response;
 }

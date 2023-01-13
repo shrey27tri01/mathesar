@@ -4,8 +4,19 @@ export interface Options {
   locale?: string;
   allowFloat: boolean;
   allowNegative: boolean;
-  useGrouping: boolean | 'auto';
+  /**
+   * Corresponds to the options of the [Intl.NumberFormat][1] API.
+   *
+   * The MDN docs say that "true" and "false" are accepted as strings, but in my
+   * testing with Firefox and Chromium, I noticed that those values need to be
+   * passed as booleans to work correctly.
+   *
+   * [1]:
+   * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/NumberFormat/NumberFormat
+   */
+  useGrouping: boolean;
   minimumFractionDigits: number;
+  maximumFractionDigits: number;
   forceTrailingDecimal: boolean;
 }
 
@@ -16,8 +27,9 @@ export interface Options {
 export const defaultOptions: Options = {
   allowFloat: false,
   allowNegative: false,
-  useGrouping: 'auto',
+  useGrouping: false,
   minimumFractionDigits: 0,
+  maximumFractionDigits: 20,
   forceTrailingDecimal: false,
 };
 

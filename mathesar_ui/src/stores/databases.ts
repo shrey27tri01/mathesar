@@ -1,15 +1,15 @@
 import { writable, derived } from 'svelte/store';
 import { preloadCommonData } from '@mathesar/utils/preloadData';
-import { getAPI, States } from '@mathesar/utils/api';
+import { getAPI, States } from '@mathesar/api/utils/requestUtils';
 
 import type { Writable, Readable } from 'svelte/store';
-import type { Database } from '@mathesar/App.d';
-import type { PaginatedResponse } from '@mathesar/utils/api';
+import type { Database } from '@mathesar/AppTypes';
+import type { PaginatedResponse } from '@mathesar/api/utils/requestUtils';
 import type { CancellablePromise } from '@mathesar-component-library';
 
 const commonData = preloadCommonData();
 
-export const currentDBName: Writable<Database['name']> = writable(
+export const currentDBName: Writable<Database['name'] | undefined> = writable(
   commonData?.current_db ?? undefined,
 );
 
@@ -35,6 +35,18 @@ export const currentDBId: Readable<Database['id'] | undefined> = derived(
       return undefined;
     }
     return _databases?.find((database) => database.name === _currentDBName)?.id;
+  },
+);
+
+export const currentDatabase = derived(
+  [currentDBName, databases],
+  ([_currentDBName, databasesStore]) => {
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    const _databases = databasesStore.data;
+    if (!_databases?.length) {
+      return undefined;
+    }
+    return _databases?.find((database) => database.name === _currentDBName);
   },
 );
 

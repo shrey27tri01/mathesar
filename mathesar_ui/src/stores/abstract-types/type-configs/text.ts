@@ -1,17 +1,18 @@
 import type { FormValues } from '@mathesar-component-library/types';
 
-import type { DbType } from '@mathesar/App';
-import type { Column } from '@mathesar/stores/table-data/types';
+import type { DbType } from '@mathesar/AppTypes';
+import type { Column } from '@mathesar/api/types/tables/columns';
+import { iconUiTypeText } from '@mathesar/icons';
 import type {
   AbstractTypeConfigForm,
   AbstractTypeConfiguration,
   AbstractTypeDbConfig,
 } from '../types';
 
-const DB_TYPES = {
-  VARCHAR: 'VARCHAR',
-  CHAR: 'CHAR',
-  TEXT: 'TEXT',
+export const DB_TYPES = {
+  VARCHAR: 'character varying',
+  CHAR: 'character',
+  TEXT: 'text',
 };
 
 const dbForm: AbstractTypeConfigForm = {
@@ -34,7 +35,7 @@ const dbForm: AbstractTypeConfigForm = {
       {
         type: 'input',
         variable: 'restrictFieldSize',
-        label: 'Restrict Field Size',
+        label: 'Set a maximum length',
       },
       {
         type: 'if',
@@ -102,9 +103,9 @@ function constructDbFormValuesFromTypeOptions(
 }
 
 const textType: AbstractTypeConfiguration = {
-  icon: 'T',
+  getIcon: () => ({ ...iconUiTypeText, label: 'Text' }),
   defaultDbType: DB_TYPES.VARCHAR,
-  input: {
+  cellInfo: {
     type: 'string',
     config: {
       multiLine: true,

@@ -10,17 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      # In this step, this action saves a list of existing images,
-      # the cache is created without them in the post run.
-      # It also restores the cache if it exists.
-      - uses: satackey/action-docker-layer-caching@v0.0.11
-        # Ignore the failure of a step and avoid terminating the job.
-        continue-on-error: true
-        with:
-          key: mathesar-docker-cache-{hash}
-          restore-keys: |
-            mathesar-docker-cache-
-
       - name: Copy env file
         run: cp .env.example .env
 
@@ -32,11 +21,11 @@ jobs:
       - name: Build the stack
         run: docker-compose up --build -d
 
-      - name: create coverage directory
+      - name: Create coverage directory
         run: docker exec mathesar_service mkdir coverage_report
 
       - name: Run tests with pytest
-        run: docker exec mathesar_service pytest  --ignore=mathesar/tests/integration/ --cov-report=xml:coverage_report/coverage.xml
+        run: docker exec mathesar_service pytest --exitfirst --ignore=mathesar/tests/integration/ --cov-report=xml:coverage_report/coverage.xml
 
       - name: Save the coverage report
         uses: codecov/codecov-action@v2

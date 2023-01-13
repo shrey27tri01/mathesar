@@ -1,62 +1,93 @@
 from django.core.cache import cache
+import pytest
 from sqlalchemy import text
-from unittest.mock import patch
 
-from db.schemas.utils import get_mathesar_schemas
-from mathesar import models
-from mathesar import reflection
+from db.schemas.utils import get_mathesar_schemas, get_schema_oid_from_name
+from mathesar.models.base import Schema
 from mathesar.api.exceptions.error_codes import ErrorCodes
-from mathesar.database.base import create_mathesar_engine
-from mathesar.utils.schemas import create_schema_and_object
+from mathesar.models.users import DatabaseRole
 
 
-def check_schema_response(response_schema, schema, schema_name, test_db_name, check_schema_objects=True):
+def check_schema_response(
+        MOD_engine_cache,
+        response_schema,
+        schema,
+        schema_name,
+        test_db_name,
+        schema_description=None,
+        check_schema_objects=True
+):
     assert response_schema['id'] == schema.id
     assert response_schema['name'] == schema_name
     assert response_schema['database'] == test_db_name
-    assert 'has_dependencies' in response_schema
+    assert response_schema['description'] == schema_description
+    assert 'has_dependents' in response_schema
     if check_schema_objects:
-        assert schema_name in get_mathesar_schemas(
-            create_mathesar_engine(test_db_name)
-        )
+        engine = MOD_engine_cache(test_db_name)
+        assert schema_name in get_mathesar_schemas(engine)
 
 
-def test_schema_list(client, patent_schema, empty_nasa_table):
-    cache.clear()
+list_clients_with_results_count = [
+    ('superuser_client_factory', 3),
+    ('db_manager_client_factory', 3),
+    ('db_editor_client_factory', 3),
+    ('schema_manager_client_factory', 1),
+    ('schema_viewer_client_factory', 1),
+    ('db_viewer_schema_manager_client_factory', 3)
+]
+
+
+@pytest.mark.parametrize('client_name, expected_schema_count', list_clients_with_results_count)
+def test_schema_list(request, patent_schema, create_schema, MOD_engine_cache, client_name, expected_schema_count):
+    create_schema("Private Schema")
+    client = request.getfixturevalue(client_name)(patent_schema)
     response = client.get('/api/db/v0/schemas/')
-    response_data = response.json()
-    response_schema = [
-        s for s in response_data['results'] if s['name'] != 'public'
-    ][0]
-
     assert response.status_code == 200
-    assert response_data['count'] == 2
-    assert len(response_data['results']) == 2
-    check_schema_response(response_schema, patent_schema, patent_schema.name,
-                          patent_schema.database.name)
+
+    response_data = response.json()
+
+    assert response_data['count'] == expected_schema_count
+    results = response_data['results']
+    assert len(results) == expected_schema_count
+
+    response_schema = None
+    for some_schema in response_data['results']:
+        if some_schema['name'] == patent_schema.name:
+            response_schema = some_schema
+    assert response_schema is not None
+    check_schema_response(
+        MOD_engine_cache,
+        response_schema,
+        patent_schema,
+        patent_schema.name,
+        patent_schema.database.name,
+    )
 
 
-def test_schema_list_filter(client, monkeypatch):
+@pytest.mark.skip("Faulty DB handling assumptions; invalid")
+def test_schema_list_filter(client, create_db_schema, FUN_create_dj_db, MOD_engine_cache):
     schema_params = [("schema_1", "database_1"), ("schema_2", "database_2"),
                      ("schema_3", "database_3"), ("schema_1", "database_3")]
-    dbs = {
-        "database_1": models.Database.objects.create(name="database_1"),
-        "database_2": models.Database.objects.create(name="database_2"),
-        "database_3": models.Database.objects.create(name="database_3"),
-    }
 
-    def mock_get_name_from_oid(oid, engine):
-        return schema_params[oid][0]
+    dbs_to_create = set(param[1] for param in schema_params)
 
-    monkeypatch.setattr(models.schema_utils, "get_schema_name_from_oid", mock_get_name_from_oid)
-    monkeypatch.setattr(models, "create_mathesar_engine", lambda x: x)
-    monkeypatch.setattr(reflection, "reflect_db_objects", lambda: None)
+    for db_name in dbs_to_create:
+        FUN_create_dj_db(db_name)
+
+    for schema_name, db_name in schema_params:
+        engine = MOD_engine_cache(db_name)
+        create_db_schema(schema_name, engine)
+
+    cache.clear()
 
     schemas = {
-        (schema_params[i][0], schema_params[i][1]): models.Schema.objects.create(
-            oid=i, database=dbs[schema_params[i][1]]
+        schema_param: Schema.objects.get(
+            oid=get_schema_oid_from_name(
+                schema_param[0],
+                MOD_engine_cache(schema_param[1])
+            ),
         )
-        for i in range(len(schema_params))
+        for schema_param in schema_params
     }
 
     names = ["schema_1", "schema_3"]
@@ -73,34 +104,42 @@ def test_schema_list_filter(client, monkeypatch):
     assert response_data['count'] == 2
     assert len(response_data['results']) == 2
 
-    response_schemas = {(schema["name"], schema["database"]): schema
-                        for schema in response_schemas}
+    response_schemas = {
+        (schema["name"], schema["database"]): schema
+        for schema in response_schemas
+    }
+
     for name in names:
         for database in databases:
             query_tuple = (name, database)
-            if query_tuple not in schemas:
+            if query_tuple not in schema_params:
                 continue
             schema = schemas[query_tuple]
             response_schema = response_schemas[query_tuple]
-            check_schema_response(response_schema, schema, schema.name,
-                                  schema.database.name, check_schema_objects=False)
+            check_schema_response(
+                MOD_engine_cache,
+                response_schema, schema, schema.name,
+                schema.database.name, check_schema_objects=False
+            )
 
 
-def test_schema_detail(create_table, client, test_db_name):
+def test_schema_detail(create_patents_table, client, test_db_name, MOD_engine_cache):
     """
     Desired format:
     One item in the results list in the schema list view, see above.
     """
-    create_table('NASA Schema Detail')
+    table = create_patents_table('NASA Schema Detail')
 
-    schema = models.Schema.objects.get()
-    response = client.get(f'/api/db/v0/schemas/{schema.id}/')
+    response = client.get(f'/api/db/v0/schemas/{table.schema.id}/')
     response_schema = response.json()
     assert response.status_code == 200
-    check_schema_response(response_schema, schema, 'Patents', test_db_name)
+    check_schema_response(
+        MOD_engine_cache,
+        response_schema, table.schema, table.schema.name, test_db_name
+    )
 
 
-def test_schema_sort_by_name(create_schema, client):
+def test_schema_sort_by_name(create_schema, client, MOD_engine_cache):
     """
     Desired format:
     One item in the results list in the schema list view, see above.
@@ -129,19 +168,23 @@ def test_schema_sort_by_name(create_schema, client):
     response_schemas = [s for s in response_data['results'] if s['name'] != 'public']
     comparison_tuples = zip(response_schemas, unsorted_expected_schemas)
     for comparison_tuple in comparison_tuples:
-        check_schema_response(comparison_tuple[0], comparison_tuple[1], comparison_tuple[1].name,
-                              comparison_tuple[1].database.name)
+        check_schema_response(
+            MOD_engine_cache, comparison_tuple[0], comparison_tuple[1], comparison_tuple[1].name,
+            comparison_tuple[1].database.name
+        )
     sort_field = "name"
     response = client.get(f'/api/db/v0/schemas/?sort_by={sort_field}')
     response_data = response.json()
     response_schemas = [s for s in response_data['results'] if s['name'] != 'public']
     comparison_tuples = zip(response_schemas, expected_schemas)
     for comparison_tuple in comparison_tuples:
-        check_schema_response(comparison_tuple[0], comparison_tuple[1], comparison_tuple[1].name,
-                              comparison_tuple[1].database.name)
+        check_schema_response(
+            MOD_engine_cache, comparison_tuple[0], comparison_tuple[1], comparison_tuple[1].name,
+            comparison_tuple[1].database.name
+        )
 
 
-def test_schema_sort_by_id(create_schema, client):
+def test_schema_sort_by_id(create_schema, client, MOD_engine_cache):
     """
     Desired format:
     One item in the results list in the schema list view, see above.
@@ -170,36 +213,138 @@ def test_schema_sort_by_id(create_schema, client):
     response_schemas = [s for s in response_data['results'] if s['name'] != 'public']
     comparison_tuples = zip(response_schemas, unsorted_expected_schemas)
     for comparison_tuple in comparison_tuples:
-        check_schema_response(comparison_tuple[0], comparison_tuple[1], comparison_tuple[1].name,
-                              comparison_tuple[1].database.name)
+        check_schema_response(
+            MOD_engine_cache,
+            comparison_tuple[0], comparison_tuple[1], comparison_tuple[1].name,
+            comparison_tuple[1].database.name
+        )
 
     response = client.get('/api/db/v0/schemas/?sort_by=id')
     response_data = response.json()
     response_schemas = [s for s in response_data['results'] if s['name'] != 'public']
     comparison_tuples = zip(response_schemas, expected_schemas)
     for comparison_tuple in comparison_tuples:
-        check_schema_response(comparison_tuple[0], comparison_tuple[1], comparison_tuple[1].name,
-                              comparison_tuple[1].database.name)
+        check_schema_response(
+            MOD_engine_cache,
+            comparison_tuple[0], comparison_tuple[1], comparison_tuple[1].name,
+            comparison_tuple[1].database.name
+        )
 
 
-def test_schema_create(client, test_db_name):
-    num_schemas = models.Schema.objects.count()
+def test_schema_create_by_superuser(client, FUN_create_dj_db, MOD_engine_cache):
+    db_name = "some_db1"
+    FUN_create_dj_db(db_name)
 
+    schema_count_before = Schema.objects.count()
+
+    schema_name = 'Test Schema'
     data = {
-        'name': 'Test Schema',
-        'database': test_db_name
+        'name': schema_name,
+        'database': db_name
     }
     response = client.post('/api/db/v0/schemas/', data=data)
     response_schema = response.json()
-    schema = models.Schema.objects.get(id=response_schema['id'])
 
     assert response.status_code == 201
-    assert models.Schema.objects.count() == num_schemas + 1
-    check_schema_response(response_schema, schema, 'Test Schema', test_db_name, 0)
+    schema_count_after = Schema.objects.count()
+    assert schema_count_after == schema_count_before + 1
+    schema = Schema.objects.get(id=response_schema['id'])
+    check_schema_response(
+        MOD_engine_cache,
+        response_schema,
+        schema,
+        schema_name,
+        db_name,
+        check_schema_objects=0
+    )
 
 
-def test_schema_update(client, test_db_name):
-    schema = create_schema_and_object('foo', test_db_name)
+def test_schema_create_by_db_manager(client_bob, user_bob, FUN_create_dj_db, get_uid):
+    db_name = get_uid()
+    role = "manager"
+    database = FUN_create_dj_db(db_name)
+
+    schema_name = 'Test Schema'
+    data = {
+        'name': schema_name,
+        'database': db_name
+    }
+    response = client_bob.post('/api/db/v0/schemas/', data=data)
+    assert response.status_code == 400
+
+    DatabaseRole.objects.create(database=database, user=user_bob, role=role)
+    response = client_bob.post('/api/db/v0/schemas/', data=data)
+    assert response.status_code == 201
+
+
+def test_schema_create_by_db_editor(client_bob, user_bob, FUN_create_dj_db, get_uid):
+    db_name = get_uid()
+    role = "editor"
+    database = FUN_create_dj_db(db_name)
+    DatabaseRole.objects.create(database=database, user=user_bob, role=role)
+
+    schema_name = 'Test Schema'
+    data = {
+        'name': schema_name,
+        'database': db_name
+    }
+    response = client_bob.post('/api/db/v0/schemas/', data=data)
+    assert response.status_code == 400
+
+
+def test_schema_create_multiple_existing_roles(client_bob, user_bob, FUN_create_dj_db, get_uid):
+    database_with_viewer_access = FUN_create_dj_db(get_uid())
+    database_with_manager_access = FUN_create_dj_db(get_uid())
+    FUN_create_dj_db(get_uid())
+    DatabaseRole.objects.create(user=user_bob, database=database_with_viewer_access, role='viewer')
+    DatabaseRole.objects.create(user=user_bob, database=database_with_manager_access, role='manager')
+
+    schema_name = 'Test Schema'
+    data = {
+        'name': schema_name,
+        'database': database_with_viewer_access.name
+    }
+    response = client_bob.post('/api/db/v0/schemas/', data=data)
+    assert response.status_code == 400
+    data['database'] = database_with_manager_access.name
+    response = client_bob.post('/api/db/v0/schemas/', data=data)
+    assert response.status_code == 201
+
+
+@pytest.mark.skip("Faulty DB handling assumptions; invalid")
+def test_schema_create_description(client, FUN_create_dj_db, MOD_engine_cache):
+    db_name = "some_db2"
+    FUN_create_dj_db(db_name)
+
+    schema_count_before = Schema.objects.count()
+
+    schema_name = 'Test Schema with description'
+    description = 'blah blah blah'
+    data = {
+        'name': schema_name,
+        'database': db_name,
+        'description': description,
+    }
+    response = client.post('/api/db/v0/schemas/', data=data)
+    response_schema = response.json()
+
+    assert response.status_code == 201
+    schema_count_after = Schema.objects.count()
+    assert schema_count_after == schema_count_before + 1
+    schema = Schema.objects.get(id=response_schema['id'])
+    check_schema_response(
+        MOD_engine_cache,
+        response_schema,
+        schema,
+        schema_name,
+        db_name,
+        schema_description=description,
+        check_schema_objects=0,
+    )
+
+
+def test_schema_update(client, create_schema):
+    schema = create_schema('foo')
     data = {
         'name': 'blah'
     }
@@ -209,7 +354,7 @@ def test_schema_update(client, test_db_name):
     assert response.json()[0]['code'] == ErrorCodes.MethodNotAllowed.value
 
 
-def test_schema_partial_update(create_schema, client, test_db_name):
+def test_schema_partial_update(create_schema, client, test_db_name, MOD_engine_cache):
     schema_name = 'NASA Schema Partial Update'
     new_schema_name = 'NASA Schema Partial Update New'
     schema = create_schema(schema_name)
@@ -219,62 +364,71 @@ def test_schema_partial_update(create_schema, client, test_db_name):
 
     response_schema = response.json()
     assert response.status_code == 200
-    check_schema_response(response_schema, schema, new_schema_name, test_db_name,)
+    check_schema_response(MOD_engine_cache, response_schema, schema, new_schema_name, test_db_name)
 
-    schema = models.Schema.objects.get(oid=schema.oid)
+    schema = Schema.objects.get(oid=schema.oid)
     assert schema.name == new_schema_name
 
 
-def test_schema_patch_same_name(create_schema, client, test_db_name):
+update_clients_with_status_code = [
+    ('superuser_client_factory', 200),
+    ('db_manager_client_factory', 200),
+    ('db_editor_client_factory', 403),
+    ('schema_manager_client_factory', 200),
+    ('schema_viewer_client_factory', 403),
+    ('db_viewer_schema_manager_client_factory', 200)
+]
+
+
+@pytest.mark.parametrize('client_name, expected_status_code', update_clients_with_status_code)
+def test_schema_patch_same_name(create_schema, request, client_name, expected_status_code):
     schema_name = 'Patents Schema Same Name'
     schema = create_schema(schema_name)
-
+    client = request.getfixturevalue(client_name)(schema)
     body = {'name': schema_name}
     response = client.patch(f'/api/db/v0/schemas/{schema.id}/', body)
-
-    response_schema = response.json()
-    assert response.status_code == 200
-    check_schema_response(
-        response_schema,
-        schema,
-        schema_name,
-        test_db_name
-    )
-    schema = models.Schema.objects.get(oid=schema.oid)
-    assert schema.name == schema_name
+    assert response.status_code == expected_status_code
 
 
 def test_schema_delete(create_schema, client):
     schema_name = 'NASA Schema Delete'
     schema = create_schema(schema_name)
 
-    with patch.object(models, 'drop_schema') as mock_infer:
-        response = client.delete(f'/api/db/v0/schemas/{schema.id}/')
+    response = client.delete(f'/api/db/v0/schemas/{schema.id}/')
     assert response.status_code == 204
 
     # Ensure the Django model was deleted
-    existing_oids = {schema.oid for schema in models.Schema.objects.all()}
+    existing_oids = {schema.oid for schema in Schema.objects.all()}
     assert schema.oid not in existing_oids
 
-    # Ensure the backend schema would have been deleted
-    assert mock_infer.call_args is not None
-    assert mock_infer.call_args[0] == (
-        schema.name,
-        schema._sa_engine,
-    )
-    assert mock_infer.call_args[1] == {
-        'cascade': True
-    }
+
+delete_clients_with_status_code = [
+    ('superuser_client_factory', 204),
+    ('db_manager_client_factory', 204),
+    ('db_editor_client_factory', 403),
+    ('schema_manager_client_factory', 204),
+    ('schema_viewer_client_factory', 403),
+    ('db_viewer_schema_manager_client_factory', 204)
+]
 
 
-def test_schema_dependencies(client, create_schema):
+@pytest.mark.parametrize('client_name, expected_status_code', delete_clients_with_status_code)
+def test_schema_delete_by_different_roles(create_schema, request, client_name, expected_status_code):
+    schema_name = 'NASA Schema Delete'
+    schema = create_schema(schema_name)
+    client = request.getfixturevalue(client_name)(schema)
+    response = client.delete(f'/api/db/v0/schemas/{schema.id}/')
+    assert response.status_code == expected_status_code
+
+
+def test_schema_dependents(client, create_schema):
     schema_name = 'NASA Schema Dependencies'
     schema = create_schema(schema_name)
 
     response = client.get(f'/api/db/v0/schemas/{schema.id}/')
     response_schema = response.json()
     assert response.status_code == 200
-    assert response_schema['has_dependencies'] is True
+    assert response_schema['has_dependents'] is False
 
 
 def test_schema_detail_404(client):
@@ -298,12 +452,10 @@ def test_schema_delete_404(client):
     assert response.json()[0]['code'] == ErrorCodes.NotFound.value
 
 
-def test_schema_get_with_reflect_new(client, test_db_name):
-    engine = create_mathesar_engine(test_db_name)
+def test_schema_get_with_reflect_new(client, engine):
     schema_name = 'a_new_schema'
     with engine.begin() as conn:
         conn.execute(text(f'CREATE SCHEMA {schema_name};'))
-    cache.clear()
     response = client.get('/api/db/v0/schemas/')
     # The schema number should only change after the GET request
     response_data = response.json()
@@ -315,13 +467,9 @@ def test_schema_get_with_reflect_new(client, test_db_name):
         conn.execute(text(f'DROP SCHEMA {schema_name} CASCADE;'))
 
 
-def test_schema_get_with_reflect_change(client, test_db_name):
-    engine = create_mathesar_engine(test_db_name)
+def test_schema_get_with_reflect_change(client, engine, create_db_schema):
     schema_name = 'a_new_schema'
-    with engine.begin() as conn:
-        conn.execute(text(f'CREATE SCHEMA {schema_name};'))
-
-    cache.clear()
+    create_db_schema(schema_name, engine)
     response = client.get('/api/db/v0/schemas/')
     response_data = response.json()
     orig_created = [
@@ -347,10 +495,14 @@ def test_schema_get_with_reflect_change(client, test_db_name):
     assert orig_id == modified_id
 
 
-def test_schema_create_duplicate(client, test_db_name):
+@pytest.mark.skip("Faulty DB handling assumptions; invalid")
+def test_schema_create_duplicate(client, FUN_create_dj_db):
+    db_name = "tmp_db1"
+    FUN_create_dj_db(db_name)
+
     data = {
         'name': 'Test Duplication Schema',
-        'database': test_db_name
+        'database': db_name
     }
     response = client.post('/api/db/v0/schemas/', data=data)
     assert response.status_code == 201
@@ -358,13 +510,10 @@ def test_schema_create_duplicate(client, test_db_name):
     assert response.status_code == 400
 
 
-def test_schema_get_with_reflect_delete(client, test_db_name):
-    engine = create_mathesar_engine(test_db_name)
+def test_schema_get_with_reflect_delete(client, engine, create_db_schema):
     schema_name = 'a_new_schema'
-    with engine.begin() as conn:
-        conn.execute(text(f'CREATE SCHEMA {schema_name};'))
+    create_db_schema(schema_name, engine)
 
-    cache.clear()
     response = client.get('/api/db/v0/schemas/')
     response_data = response.json()
     orig_created = [
@@ -380,17 +529,3 @@ def test_schema_get_with_reflect_delete(client, test_db_name):
         schema for schema in response_data['results'] if schema['name'] == schema_name
     ]
     assert len(orig_created) == 0
-
-
-def test_schema_viewset_sets_cache(client):
-    cache.delete(reflection.DB_REFLECTION_KEY)
-    assert not cache.get(reflection.DB_REFLECTION_KEY)
-    client.get('/api/db/v0/schemas/')
-    assert cache.get(reflection.DB_REFLECTION_KEY)
-
-
-def test_schema_viewset_checks_cache(client):
-    cache.delete(reflection.DB_REFLECTION_KEY)
-    with patch.object(reflection, 'reflect_schemas_from_database') as mock_reflect:
-        client.get('/api/db/v0/schemas/')
-    mock_reflect.assert_called()

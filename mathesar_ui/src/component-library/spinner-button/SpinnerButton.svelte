@@ -1,15 +1,21 @@
 <script lang="ts">
-  import type { IconProps } from '@mathesar-component-library-dir/icon/Icon.d';
-  import { faArrowRight } from '@fortawesome/free-solid-svg-icons';
+  import type { IconProps } from '@mathesar-component-library-dir/icon/IconTypes';
   import Button from '@mathesar-component-library-dir/button/Button.svelte';
   import Spinner from '@mathesar-component-library-dir/spinner/Spinner.svelte';
   import Icon from '@mathesar-component-library-dir/icon/Icon.svelte';
+  import type { Size } from '@mathesar-component-library-dir/commonTypes';
 
   export let label = 'Proceed';
-  export let icon: IconProps = { data: faArrowRight };
-  export let onClick: () => Promise<void>;
+
+  // TODO: Removing this default proceed icon
+  // Change if needed in other designs
+  export let icon: IconProps | undefined = undefined;
+  export let onClick: () => Promise<void> | void = () => {};
   export let disabled = false;
   export let isProcessing = false;
+  export let size: Size | undefined = undefined;
+  let classes = '';
+  export { classes as class };
 
   /**
    * Bind to this function if you want to be able to programmatically call the
@@ -30,10 +36,12 @@
   on:click={proceed}
   appearance="primary"
   disabled={disabled || isProcessing}
+  class={classes}
+  {size}
 >
   {#if isProcessing}
     <Spinner />
-  {:else}
+  {:else if icon}
     <Icon {...icon} />
   {/if}
   <span>{label}</span>

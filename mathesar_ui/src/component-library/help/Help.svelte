@@ -1,19 +1,10 @@
 <script lang="ts">
-  import { faQuestionCircle } from '@fortawesome/free-solid-svg-icons';
-  import Dropdown from '@mathesar-component-library-dir/dropdown/Dropdown.svelte';
+  import Tooltip from '@mathesar-component-library-dir/tooltip/Tooltip.svelte';
   import Icon from '@mathesar-component-library-dir/icon/Icon.svelte';
+  import { iconHelp } from '@mathesar-component-library-dir/common/icons';
 </script>
 
-<Dropdown
-  ariaLabel="Help"
-  placement="auto"
-  showArrow={false}
-  triggerAppearance="ghost"
-  triggerClass="help-trigger"
-  contentClass="help-content"
->
-  <span slot="trigger" class="help-trigger-content">
-    <Icon data={faQuestionCircle} />
-  </span>
+<Tooltip aria-label="Help" class="help-trigger">
+  <Icon slot="trigger" {...iconHelp} />
   <slot slot="content" />
-</Dropdown>
+</Tooltip>

@@ -1,28 +1,25 @@
 .menu {
-  --spacing-x: 0.4em;
-  --spacing-y: 0.4em;
+  --spacing-x-default: 0.5em;
+  --spacing-y-default: 0.5em;
   display: inline-grid;
   min-width: var(--min-width, 0);
   grid-template-columns:
-    [spacer-left] var(--spacing-x)
+    [spacer-left] var(--spacing-x, var(--spacing-x-default))
     [control] auto
     [icon] auto
     [label] 1fr
-    [spacer-right] var(--spacing-x);
-  padding: var(--spacing-y) 0;
+    [spacer-right] var(--spacing-x, var(--spacing-x-default));
 
   .menu-heading {
     grid-column: 1 / -1;
-    color: #444;
-    font-size: 80%;
-    padding: 0.2em 0;
+    color: var(--slate-500);
+    padding: 0.2em 0.5em;
   }
 
   .menu-divider {
     grid-column: 1 / -1;
-    border-top: 0.1em solid #ccc;
+    border-top: 0.1em solid var(--slate-200);
     height: 0;
-    margin: var(--spacing-y, 0.4em) 0;
   }
 
   /**
@@ -48,35 +45,44 @@
   .menu-item {
     display: contents;
     cursor: pointer;
+    color: var(--slate-800);
 
+    &.menu-item-link {
+      text-decoration: none;
+    }
+
+    &.danger {
+      color: var(--red-500);
+    }
     &:not(.disabled):hover .cell {
-      background-color: #f0f0f0;
+      background-color: var(--slate-100);
     }
     &.disabled {
-      color: #999;
+      color: var(--slate-300);
       cursor: not-allowed;
     }
-    .control {
+    > .control {
       grid-column: control;
     }
-    .icon {
+    > .icon {
       grid-column: icon;
     }
-    .label {
+    > .label {
       grid-column: label;
     }
-    .cell:not(:empty) {
-      padding: var(--spacing-y) var(--spacing-x);
+    > .cell:not(:empty) {
+      padding: var(--spacing-y, var(--spacing-y-default))
+        var(--spacing-x, var(--spacing-x-default));
     }
-    .control,
-    .icon {
+    > .control,
+    > .icon {
       display: flex;
       align-items: center;
     }
-    .cell.control {
+    > .cell.control {
       --checkbox-margin-bottom: 0;
     }
-    .passthrough-button {
+    > .passthrough-button {
       background: inherit;
       border-radius: inherit;
       border: inherit;

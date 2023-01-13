@@ -1,22 +1,21 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from 'svelte';
   import { fade, fly } from 'svelte/transition';
-  import { faTimes } from '@fortawesome/free-solid-svg-icons';
-  import type { Size } from '@mathesar-component-library/types';
-  import { Button, Icon, portal } from '@mathesar-component-library';
-  import type { ModalCloseAction } from './modal.d';
+
+  import Window from '@mathesar-component-library-dir/window/Window.svelte';
+  import portal from '@mathesar-component-library-dir/common/actions/portal';
+
+  import type { ModalCloseAction, ModalWidth } from './modalTypes';
 
   const dispatch = createEventDispatcher();
 
   export let isOpen = false;
   export let title: string | undefined = undefined;
-  let classes = '';
-  export { classes as class };
-  export let style = '';
-  export let size: Size = 'medium';
+  export let size: ModalWidth = 'medium';
   export let allowClose = true;
   export let hasOverlay = true;
   export let closeOn: ModalCloseAction[] = ['button'];
+  export let canScrollBody = true;
 
   $: closeOnButton = allowClose && closeOn.includes('button');
   $: closeOnEsc = allowClose && closeOn.includes('esc');
@@ -49,7 +48,7 @@
 <svelte:window on:keydown={handleKeydown} />
 
 {#if isOpen}
-  <div class="modal-wrapper" use:portal>
+  <div class="modal" use:portal>
     {#if hasOverlay}
       <div
         class="overlay"
@@ -59,30 +58,17 @@
       />
     {/if}
     <div
-      class={['modal', `modal-size-${size}`, classes].join(' ')}
-      {style}
+      class="window-positioner"
+      class:width-medium={size === 'medium'}
+      class:width-large={size === 'large'}
       in:fly={{ y: 20, duration: 150 }}
       out:fly={{ y: 20, duration: 150 }}
     >
-      {#if $$slots.title || title || closeOnButton}
-        <div class="title-bar">
-          <div class="title">
-            <slot name="title" />
-            {title ?? ''}
-          </div>
-          {#if closeOnButton}
-            <Button appearance="plain" class="close-button" on:click={close}>
-              <Icon data={faTimes} />
-            </Button>
-          {/if}
-        </div>
-      {/if}
-
-      <div class="body">
-        <slot {close} />
-      </div>
-
-      <div class="footer"><slot name="footer" /></div>
+      <Window {canScrollBody} hasCloseButton={closeOnButton} on:close={close}>
+        <div slot="title"><slot name="title" />{title ?? ''}</div>
+        <slot />
+        <slot name="footer" slot="footer" />
+      </Window>
     </div>
   </div>
 {/if}

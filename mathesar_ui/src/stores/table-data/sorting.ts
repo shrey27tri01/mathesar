@@ -1,25 +1,22 @@
 import { ImmutableMap } from '@mathesar-component-library';
+import {
+  type SortDirection,
+  allowedSortDirections,
+} from '@mathesar/components/sort-entry/utils';
 import type {
   SortDirection as ApiSortDirection,
   SortingEntry as ApiSortingEntry,
   GetRequestParams,
-} from '@mathesar/api/tables/records';
+} from '@mathesar/api/types/tables/records';
 import type { Grouping } from './grouping';
 
-export enum SortDirection {
-  /** Ascending */
-  A = 'a',
-  /** Descending */
-  D = 'd',
-}
-
 function sortDirectionIsValid(d: string): boolean {
-  return (Object.values(SortDirection) as string[]).includes(d);
+  return (allowedSortDirections as string[]).includes(d);
 }
 
 const apiSortDirectionMap = new Map<SortDirection, ApiSortDirection>([
-  [SortDirection.A, 'asc'],
-  [SortDirection.D, 'desc'],
+  ['ASCENDING', 'asc'],
+  ['DESCENDING', 'desc'],
 ]);
 function getApiSortDirection(sortDirection: SortDirection): ApiSortDirection {
   const d = apiSortDirectionMap.get(sortDirection);
@@ -27,14 +24,6 @@ function getApiSortDirection(sortDirection: SortDirection): ApiSortDirection {
     throw new Error(`Invalid sort direction: ${sortDirection}`);
   }
   return d;
-}
-
-const directionLabels = new Map([
-  [SortDirection.A, 'asc'],
-  [SortDirection.D, 'desc'],
-]);
-export function getDirectionLabel(direction: SortDirection): string {
-  return directionLabels.get(direction) ?? '';
 }
 
 /**
@@ -77,9 +66,9 @@ export class Sorting extends ImmutableMap<number, SortDirection> {
     grouping: Grouping,
   ): Pick<GetRequestParams, 'order_by'> {
     const sortingFromGrouping = new Sorting(
-      [...grouping].map((g) => [g, SortDirection.A]),
+      grouping.entries.map((g) => [g.columnId, 'ASCENDING']),
     );
-    return sortingFromGrouping.coalesceEntries(this).recordsRequestParams();
+    return sortingFromGrouping.withEntries(this).recordsRequestParams();
   }
 
   terse(): TerseSorting {

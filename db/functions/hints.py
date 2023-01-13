@@ -101,6 +101,9 @@ column = _make_hint("column")
 array = _make_hint("array")
 
 
+numeric = _make_hint("numeric")
+
+
 string_like = _make_hint("string_like")
 
 
@@ -122,12 +125,25 @@ date = _make_hint("date")
 literal = _make_hint("literal")
 
 
+json = _make_hint("json")
+
+
+json_array = _make_hint("jsonlist")
+
+
+json_object = _make_hint("map")
+
+
 # Meant to mark a DBFunction for the filtering API to use.
 mathesar_filter = _make_hint("mathesar_filter")
 
 
 # A hint that all types are meant to satisfy.
 any = _make_hint("any")
+
+
+# Meant to mark a DBFunction as an aggregation.
+aggregation = _make_hint("aggregation")
 
 
 # When applied to a parameter, meant to suggest values for that parameter.

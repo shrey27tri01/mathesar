@@ -1,17 +1,13 @@
-import type { FormValues } from '@mathesar/component-library/types';
-import type { Column } from '@mathesar/stores/table-data/types';
+import type { FormValues } from '@mathesar-component-library/types';
+import type {
+  BooleanDisplayOptions,
+  Column,
+} from '@mathesar/api/types/tables/columns';
+import { iconUiTypeBoolean } from '@mathesar/icons';
 import type {
   AbstractTypeConfigForm,
   AbstractTypeConfiguration,
 } from '../types';
-
-interface BooleanDisplayOptions {
-  input?: string | null;
-  custom_labels?: {
-    TRUE: string;
-    FALSE: string;
-  } | null;
-}
 
 const displayForm: AbstractTypeConfigForm = {
   variables: {
@@ -26,14 +22,14 @@ const displayForm: AbstractTypeConfigForm = {
     },
     trueLabel: {
       type: 'string',
-      default: 'TRUE',
+      default: 'true',
       validation: {
         checks: ['isEmpty'],
       },
     },
     falseLabel: {
       type: 'string',
-      default: 'FALSE',
+      default: 'false',
       validation: {
         checks: ['isEmpty'],
       },
@@ -123,8 +119,8 @@ function constructDisplayFormValuesFromDisplayOptions(
 }
 
 const booleanType: AbstractTypeConfiguration = {
-  icon: '?',
-  input: {
+  getIcon: () => ({ ...iconUiTypeBoolean, label: 'Boolean' }),
+  cellInfo: {
     type: 'boolean',
   },
   getDisplayConfig: () => ({

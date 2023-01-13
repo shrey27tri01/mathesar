@@ -52,6 +52,10 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "mathesar.middleware.CursorClosedHandlerMiddleware",
+    "mathesar.middleware.PasswordChangeNeededMiddleware",
+    'django_userforeignkey.middleware.UserForeignKeyMiddleware',
+    'django_request_cache.middleware.RequestCacheMiddleware',
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -99,7 +103,8 @@ for db_key, db_dict in DATABASES.items():
 
 # pytest-django will create a new database named 'test_{DATABASES[table_db]['NAME']}'
 # and use it for our API tests if we don't specify DATABASES[table_db]['TEST']['NAME']
-if decouple_config('TEST', default=False, cast=bool):
+TEST = decouple_config('TEST', default=False, cast=bool)
+if TEST:
     for db_key, _ in decouple_config('MATHESAR_DATABASES', cast=Csv(pipe_delim)):
         DATABASES[db_key]['TEST'] = {'NAME': DATABASES[db_key]['NAME']}
 
@@ -171,6 +176,9 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.SessionAuthentication'
     ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
     'DEFAULT_FILTER_BACKENDS': (
         'django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.OrderingFilter',
@@ -188,7 +196,17 @@ FRIENDLY_ERRORS = {
             'invalid_choice': 2083,
             'not_a_list': 2123,
             'empty': 2093
-        }
+        },
+        'PermittedPkRelatedField': {
+            'required': 2007,
+            'null': 2027,
+            'does_not_exist': 2151,
+            'incorrect_type': 2161
+        },
+        'PermittedSlugRelatedField': {
+            'required': 2007, 'invalid': 2002, 'null': 2027,
+            'does_not_exist': 2151, 'incorrect_type': 2161
+        },
     },
     'EXCEPTION_DICT': {
         'Http404': 4005
@@ -199,6 +217,20 @@ MATHESAR_MODE = decouple_config('MODE', default='PRODUCTION')
 MATHESAR_UI_BUILD_LOCATION = os.path.join(BASE_DIR, 'mathesar/static/mathesar/')
 MATHESAR_MANIFEST_LOCATION = os.path.join(MATHESAR_UI_BUILD_LOCATION, 'manifest.json')
 MATHESAR_CLIENT_DEV_URL = 'http://localhost:3000'
-MATHESAR_CAPTURE_UNHANDLED_EXCEPTION = decouple_config('CAPTURE_UNHANDLED_EXCEPTION', default=True)
+MATHESAR_UI_SOURCE_LOCATION = os.path.join(BASE_DIR, 'mathesar_ui/')
+MATHESAR_CAPTURE_UNHANDLED_EXCEPTION = decouple_config('CAPTURE_UNHANDLED_EXCEPTION', default=False)
+MATHESAR_STATIC_NON_CODE_FILES_LOCATION = os.path.join(BASE_DIR, 'mathesar/static/non-code/')
 
-STATICFILES_DIRS = [MATHESAR_UI_BUILD_LOCATION]
+# UI source files have to be served by Django in order for static assets to be included during dev mode
+# https://vitejs.dev/guide/assets.html
+# https://vitejs.dev/guide/backend-integration.html
+STATICFILES_DIRS = [MATHESAR_UI_SOURCE_LOCATION, MATHESAR_STATIC_NON_CODE_FILES_LOCATION] if MATHESAR_MODE == 'DEVELOPMENT' else [MATHESAR_UI_BUILD_LOCATION, MATHESAR_STATIC_NON_CODE_FILES_LOCATION]
+
+# Accounts
+AUTH_USER_MODEL = 'mathesar.User'
+LOGIN_URL = '/auth/login/'
+LOGIN_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = LOGIN_URL
+DRF_ACCESS_POLICY = {
+    'reusable_conditions': ['mathesar.api.permission_conditions']
+}

@@ -3,7 +3,7 @@
   display: flex;
   flex-wrap: nowrap;
   align-items: stretch;
-  width: 100%;
+  isolation: isolate;
 
   .input-group-text {
     display: flex;
@@ -20,22 +20,40 @@
   .input-element {
     position: relative;
     flex: 1 1 auto;
-    width: 1%;
-    min-width: 0;
+  }
 
+  .input-element,
+  button {
     &:focus {
-      z-index: 10;
+      z-index: 1;
     }
   }
 
-  > *:not(:last-child) {
-    border-top-right-radius: 0 !important;
-    border-bottom-right-radius: 0 !important;
-  }
+  &.vertical {
+    flex-direction: column;
+    flex-grow: 1;
 
-  > * + * {
-    border-top-left-radius: 0 !important;
-    border-bottom-left-radius: 0 !important;
-    margin-left: -1px !important;
+    .input-element + .input-element {
+      margin-top: 0.6rem;
+    }
+  }
+  &:not(.vertical) {
+    width: 100%;
+
+    .input-element {
+      width: 1%;
+      min-width: 0;
+    }
+
+    > *:not(:last-child) {
+      border-top-right-radius: 0 !important;
+      border-bottom-right-radius: 0 !important;
+    }
+
+    > * + * {
+      border-top-left-radius: 0 !important;
+      border-bottom-left-radius: 0 !important;
+      margin-left: -1px !important;
+    }
   }
 }

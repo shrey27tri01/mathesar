@@ -1,53 +1,56 @@
-import type { Writable } from 'svelte/store';
-import type { DBObjectEntry } from '@mathesar/App.d';
-import type { TerseMetaProps, MetaProps } from './meta';
-import { makeMetaProps, makeTerseMetaProps, Meta } from './meta';
-import type { ColumnsData } from './columns';
+import { getContext, setContext } from 'svelte';
+import {
+  derived,
+  writable,
+  get,
+  type Readable,
+  type Writable,
+} from 'svelte/store';
+import type { DBObjectEntry } from '@mathesar/AppTypes';
+import type { AbstractTypesMap } from '@mathesar/stores/abstract-types/types';
+import { States } from '@mathesar/api/utils/requestUtils';
+import type { Column } from '@mathesar/api/types/tables/columns';
+import { SheetSelection } from '@mathesar/components/sheet';
+import { Meta } from './meta';
 import { ColumnsDataStore } from './columns';
-import type { TableRecordsData } from './records';
+import type { RecordRow, TableRecordsData } from './records';
 import { RecordsData } from './records';
 import { Display } from './display';
 import type { ConstraintsData } from './constraints';
 import { ConstraintsDataStore } from './constraints';
-import type { TabularType } from './TabularType';
+import type {
+  ProcessedColumn,
+  ProcessedColumnsStore,
+} from './processedColumns';
+import { processColumn } from './processedColumns';
 
 export interface TabularDataProps {
-  type: TabularType;
   id: DBObjectEntry['id'];
-  metaProps?: MetaProps;
+  abstractTypesMap: AbstractTypesMap;
+  meta?: Meta;
+  /**
+   * Keys are columns ids. Values are cell values.
+   *
+   * Setting an entry in this Map will apply a filter condition which the user
+   * cannot see or remove. And the column used for the filter condition will be
+   * removed from view.
+   */
+  contextualFilters?: Map<number, number | string>;
+  hasEnhancedPrimaryKeyCell?: Parameters<
+    typeof processColumn
+  >[0]['hasEnhancedPrimaryKeyCell'];
 }
 
-/** [ type, id, metaProps ] */
-export type TerseTabularDataProps = [
-  TabularType,
-  DBObjectEntry['id'],
-  TerseMetaProps,
-];
-
-export function makeTabularDataProps(
-  t: TerseTabularDataProps,
-): TabularDataProps {
-  return {
-    type: t[0],
-    id: t[1],
-    metaProps: makeMetaProps(t[2]),
-  };
-}
-
-export function makeTerseTabularDataProps(
-  p: TabularDataProps,
-): TerseTabularDataProps {
-  return [p.type, p.id, makeTerseMetaProps(p.metaProps)];
-}
+export type TabularDataSelection = SheetSelection<RecordRow, ProcessedColumn>;
 
 export class TabularData {
-  type: TabularType;
-
   id: DBObjectEntry['id'];
 
   meta: Meta;
 
   columnsDataStore: ColumnsDataStore;
+
+  processedColumns: ProcessedColumnsStore;
 
   constraintsDataStore: ConstraintsDataStore;
 
@@ -55,17 +58,25 @@ export class TabularData {
 
   display: Display;
 
+  isLoading: Readable<boolean>;
+
+  selection: TabularDataSelection;
+
   constructor(props: TabularDataProps) {
-    this.type = props.type;
+    const contextualFilters =
+      props.contextualFilters ?? new Map<number, string | number>();
     this.id = props.id;
-    this.meta = new Meta(props.metaProps);
-    this.columnsDataStore = new ColumnsDataStore(this.type, this.id, this.meta);
+    this.meta = props.meta ?? new Meta();
+    this.columnsDataStore = new ColumnsDataStore({
+      parentId: this.id,
+      hiddenColumns: contextualFilters.keys(),
+    });
     this.constraintsDataStore = new ConstraintsDataStore(this.id);
     this.recordsData = new RecordsData(
-      this.type,
       this.id,
       this.meta,
       this.columnsDataStore,
+      contextualFilters,
     );
     this.display = new Display(
       this.meta,
@@ -73,12 +84,77 @@ export class TabularData {
       this.recordsData,
     );
 
-    this.columnsDataStore.on('columnRenamed', () => this.refresh());
+    this.processedColumns = derived(
+      [this.columnsDataStore.columns, this.constraintsDataStore],
+      ([columns, constraintsData]) =>
+        new Map(
+          columns.map((column, columnIndex) => [
+            column.id,
+            processColumn({
+              tableId: this.id,
+              column,
+              columnIndex,
+              constraints: constraintsData.constraints,
+              abstractTypeMap: props.abstractTypesMap,
+              hasEnhancedPrimaryKeyCell: props.hasEnhancedPrimaryKeyCell,
+            }),
+          ]),
+        ),
+    );
+
+    this.selection = new SheetSelection({
+      getColumns: () => [...get(this.processedColumns).values()],
+      getRows: () => this.recordsData.getRecordRows(),
+      getMaxSelectionRowIndex: () => {
+        const totalCount = get(this.recordsData.totalCount) ?? 0;
+        const savedRecords = get(this.recordsData.savedRecords);
+        const newRecords = get(this.recordsData.newRecords);
+        const pagination = get(this.meta.pagination);
+        const { offset } = pagination;
+        const pageSize = pagination.size;
+        /**
+         * We are not subtracting 1 from the below maxRowIndex calculation
+         * inorder to account for the add-new-record placeholder row
+         */
+        return (
+          Math.min(pageSize, totalCount - offset, savedRecords.length) +
+          newRecords.length
+        );
+      },
+    });
+
+    this.isLoading = derived(
+      [
+        this.columnsDataStore.fetchStatus,
+        this.constraintsDataStore,
+        this.recordsData.state,
+      ],
+      ([columnsStatus, constraintsData, recordsDataState]) =>
+        columnsStatus?.state === 'processing' ||
+        constraintsData.state === States.Loading ||
+        recordsDataState === States.Loading,
+    );
+
+    this.columnsDataStore.on('columnRenamed', async () => {
+      await this.refresh();
+    });
+    this.columnsDataStore.on('columnAdded', async () => {
+      await this.recordsData.fetch();
+    });
+    this.columnsDataStore.on('columnDeleted', async (columnId) => {
+      this.meta.sorting.update((s) => s.without(columnId));
+      this.meta.grouping.update((g) => g.withoutColumns([columnId]));
+      this.meta.filtering.update((f) => f.withoutColumns([columnId]));
+      await this.constraintsDataStore.fetch();
+    });
+    this.columnsDataStore.on('columnPatched', async () => {
+      await this.recordsData.fetch();
+    });
   }
 
   refresh(): Promise<
     [
-      ColumnsData | undefined,
+      Column[] | undefined,
       TableRecordsData | undefined,
       ConstraintsData | undefined,
     ]
@@ -90,12 +166,63 @@ export class TabularData {
     ]);
   }
 
+  refreshAfterColumnExtraction(
+    extractedColumnIds: Column['id'][],
+    foreignKeyColumnId?: Column['id'],
+  ) {
+    this.meta.sorting.update((s) => {
+      const firstExtractedColumnWithSort = extractedColumnIds.find((columnId) =>
+        s.has(columnId),
+      );
+      if (
+        firstExtractedColumnWithSort &&
+        foreignKeyColumnId &&
+        !s.has(foreignKeyColumnId)
+      ) {
+        const sortDirection = s.get(firstExtractedColumnWithSort);
+        return s
+          .without(extractedColumnIds)
+          .with(foreignKeyColumnId, sortDirection ?? 'ASCENDING');
+      }
+      return s.without(extractedColumnIds);
+    });
+    this.meta.filtering.update((f) => f.withoutColumns(extractedColumnIds));
+    this.meta.grouping.update((g) => {
+      const extractedColumnsHaveGrouping = extractedColumnIds.some((columnId) =>
+        g.hasColumn(columnId),
+      );
+      if (
+        extractedColumnsHaveGrouping &&
+        foreignKeyColumnId &&
+        !g.hasColumn(foreignKeyColumnId)
+      ) {
+        return g.withoutColumns(extractedColumnIds).withEntry({
+          columnId: foreignKeyColumnId,
+        });
+      }
+      return g.withoutColumns(extractedColumnIds);
+    });
+    return this.refresh();
+  }
+
   destroy(): void {
-    this.display.destroy();
     this.recordsData.destroy();
     this.constraintsDataStore.destroy();
     this.columnsDataStore.destroy();
+    this.selection.destroy();
   }
 }
 
-export type TabularDataStore = Writable<TabularData>;
+const tabularDataStoreContextKey = {};
+
+export function setTabularDataStoreInContext(
+  t: TabularData,
+): Writable<TabularData> {
+  const store = writable(t);
+  setContext(tabularDataStoreContextKey, store);
+  return store;
+}
+
+export function getTabularDataStoreFromContext(): Writable<TabularData> {
+  return getContext(tabularDataStoreContextKey);
+}

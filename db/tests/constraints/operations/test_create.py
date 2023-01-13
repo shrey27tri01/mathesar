@@ -2,9 +2,12 @@ import pytest
 from sqlalchemy import String, Integer, Column, Table, MetaData
 from sqlalchemy.exc import ProgrammingError
 
-from db.constraints.operations.create import create_unique_constraint
+from db.columns.operations.select import get_column_attnum_from_name, get_columns_attnum_from_names
+from db.constraints.base import UniqueConstraint
+from db.constraints.operations.create import create_constraint, create_unique_constraint
 from db.tables.operations.select import get_oid_from_table, reflect_table_from_oid
 from db.tests.constraints import utils as test_utils
+from db.metadata import get_empty_metadata
 
 
 def test_create_single_column_unique_constraint(engine_with_schema):
@@ -20,9 +23,9 @@ def test_create_single_column_unique_constraint(engine_with_schema):
     table.create()
     test_utils.assert_only_primary_key_present(table)
     table_oid = get_oid_from_table(table_name, schema, engine)
-
-    create_unique_constraint(table.name, schema, engine, [unique_column_name])
-    altered_table = reflect_table_from_oid(table_oid, engine)
+    unique_column_attnum = get_column_attnum_from_name(table_oid, unique_column_name, engine, metadata=get_empty_metadata())
+    create_constraint(schema, engine, UniqueConstraint(None, table_oid, [unique_column_attnum]))
+    altered_table = reflect_table_from_oid(table_oid, engine, metadata=get_empty_metadata())
     test_utils.assert_primary_key_and_unique_present(altered_table)
 
     unique_constraint = test_utils.get_first_unique_constraint(altered_table)
@@ -45,9 +48,9 @@ def test_create_multiple_column_unique_constraint(engine_with_schema):
     table.create()
     test_utils.assert_only_primary_key_present(table)
     table_oid = get_oid_from_table(table_name, schema, engine)
-
-    create_unique_constraint(table.name, schema, engine, unique_column_names)
-    altered_table = reflect_table_from_oid(table_oid, engine)
+    unique_column_attnums = get_columns_attnum_from_names(table_oid, unique_column_names, engine, metadata=get_empty_metadata())
+    create_constraint(schema, engine, UniqueConstraint(None, table_oid, unique_column_attnums))
+    altered_table = reflect_table_from_oid(table_oid, engine, metadata=get_empty_metadata())
     test_utils.assert_primary_key_and_unique_present(altered_table)
 
     unique_constraint = test_utils.get_first_unique_constraint(altered_table)
@@ -70,9 +73,10 @@ def test_create_unique_constraint_with_custom_name(engine_with_schema):
     )
     table.create()
     table_oid = get_oid_from_table(table_name, schema, engine)
-    create_unique_constraint(table.name, schema, engine, [unique_column_name], constraint_name)
+    unique_column_attnum = get_column_attnum_from_name(table_oid, unique_column_name, engine, metadata=get_empty_metadata())
+    create_constraint(schema, engine, UniqueConstraint(constraint_name, table_oid, [unique_column_attnum]))
 
-    altered_table = reflect_table_from_oid(table_oid, engine)
+    altered_table = reflect_table_from_oid(table_oid, engine, metadata=get_empty_metadata())
     test_utils.assert_primary_key_and_unique_present(altered_table)
 
     unique_constraint = test_utils.get_first_unique_constraint(altered_table)
@@ -95,9 +99,10 @@ def test_create_unique_constraint_with_duplicate_name(engine_with_schema):
     )
     table.create()
     table_oid = get_oid_from_table(table_name, schema, engine)
-    create_unique_constraint(table.name, schema, engine, [unique_column_names[0]], constraint_name)
+    unique_column_attnum = get_column_attnum_from_name(table_oid, unique_column_names[0], engine, metadata=get_empty_metadata())
+    create_constraint(schema, engine, UniqueConstraint(constraint_name, table_oid, [unique_column_attnum]))
 
-    altered_table = reflect_table_from_oid(table_oid, engine)
+    altered_table = reflect_table_from_oid(table_oid, engine, metadata=get_empty_metadata())
     test_utils.assert_primary_key_and_unique_present(altered_table)
     with pytest.raises(ProgrammingError):
         create_unique_constraint(table.name, schema, engine, [unique_column_names[1]], constraint_name)

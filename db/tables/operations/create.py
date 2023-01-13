@@ -4,9 +4,10 @@ from sqlalchemy.schema import DDLElement
 
 from db.columns.utils import init_mathesar_table_column_list_with_defaults
 from db.schemas.operations.create import create_schema
+from db.tables.operations.alter import comment_on_table
 
 
-def create_mathesar_table(name, schema, columns, engine, metadata=None):
+def create_mathesar_table(name, schema, columns, engine, metadata=None, comment=None):
     """
     This method creates a Postgres table in the specified schema using the
     given name and column list.  It adds internal mathesar columns to the
@@ -19,6 +20,11 @@ def create_mathesar_table(name, schema, columns, engine, metadata=None):
     # SQLAlchemy context (e.g., for creating a ForeignKey relationship)
     if metadata is None:
         metadata = MetaData(bind=engine, schema=schema)
+    metadata.reflect()
+    # The exception raised by SQLAlchemy upon hitting a duplicate table in the
+    # schema is non-specific.
+    if (name, schema) in [(t.name, t.schema) for t in metadata.sorted_tables]:
+        raise DuplicateTable
     table = Table(
         name,
         metadata,
@@ -26,16 +32,22 @@ def create_mathesar_table(name, schema, columns, engine, metadata=None):
         schema=schema
     )
     table.create(engine)
+    if comment is not None:  # this check avoids an unneeded DB call
+        comment_on_table(name, schema, engine, comment)
     return table
 
 
-def create_string_column_table(name, schema, column_names, engine):
+class DuplicateTable(Exception):
+    pass
+
+
+def create_string_column_table(name, schema, column_names, engine, comment=None):
     """
     This method creates a Postgres table in the specified schema, with all
     columns being String type.
     """
     columns_ = [Column(name=column_name, type_=TEXT) for column_name in column_names]
-    table = create_mathesar_table(name, schema, columns_, engine)
+    table = create_mathesar_table(name, schema, columns_, engine, comment=comment)
     return table
 
 

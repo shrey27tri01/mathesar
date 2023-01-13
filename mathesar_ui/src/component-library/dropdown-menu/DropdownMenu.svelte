@@ -2,21 +2,31 @@
   import Dropdown from '@mathesar-component-library-dir/dropdown/Dropdown.svelte';
   import Menu from '@mathesar-component-library-dir/menu/Menu.svelte';
   import Icon from '@mathesar-component-library-dir/icon/Icon.svelte';
-  import type { IconProps } from '@mathesar-component-library-dir/icon/Icon.d';
+  import type { IconProps } from '@mathesar-component-library-dir/icon/IconTypes';
 
-  export let label: string;
+  // TODO: Find some way to provide better typings
+  // for the inherited props from the Dropdown component
+  // interface $$RestProps extends ComponentProps<Dropdown> {};
+
+  export let label = '';
+  export let ariaLabel: string | undefined = undefined;
   export let icon: IconProps | undefined = undefined;
   export let closeOnInnerClick = true;
+  export let menuStyle = '';
 </script>
 
-<Dropdown {closeOnInnerClick} ariaLabel={label}>
-  <span class="dropdown-menu-trigger" slot="trigger">
-    {#if icon}
-      <Icon {...icon} />
-    {/if}
-    <span class="label">{label}</span>
-  </span>
-  <Menu slot="content" --min-width="100%">
+<Dropdown {closeOnInnerClick} ariaLabel={ariaLabel ?? label} {...$$restProps}>
+  <slot name="trigger" slot="trigger">
+    <span class="dropdown-menu-trigger">
+      {#if icon}
+        <Icon {...icon} />
+      {/if}
+      {#if label}
+        <span class="label">{label}</span>
+      {/if}
+    </span>
+  </slot>
+  <Menu slot="content" style="--min-width: 100%;{menuStyle}">
     <slot />
   </Menu>
 </Dropdown>

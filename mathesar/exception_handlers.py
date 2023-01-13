@@ -1,6 +1,8 @@
 import warnings
+import traceback
 
 from django.conf import settings
+from django.db import IntegrityError as DjangoIntegrityError
 from django.utils.encoding import force_str
 from rest_framework.views import exception_handler
 from rest_framework_friendly_errors.settings import FRIENDLY_EXCEPTION_DICT
@@ -19,6 +21,7 @@ from mathesar.errors import URLDownloadError, URLNotReachable, URLInvalidContent
 
 exception_map = {
     IntegrityError: integrity_error_mapper,
+    DjangoIntegrityError: integrity_error_mapper,
     UnsupportedTypeException: lambda exc: database_api_exceptions.UnsupportedTypeAPIException(exc),
     ProgrammingError: lambda exc: base_api_exceptions.ProgrammingAPIException(exc),
     URLDownloadError: lambda exc: data_import_api_exceptions.URLDownloadErrorAPIException(exc),
@@ -36,21 +39,26 @@ def standardize_error_response(data):
                 data[index]['code'] = ErrorCodes.UnknownError.value
         if 'detail' not in error:
             data[index]['detail'] = error.pop('details', {})
+            # Adds a Stack-trace of the error for better debugging
+        if settings.MATHESAR_MODE == 'DEVELOPMENT':
+            data[index]['stacktrace'] = reformat_stacktrace(traceback.format_exc())
     return data
 
 
 def mathesar_exception_handler(exc, context):
     response = exception_handler(exc, context)
-    # DRF default exception handler does not handle non Api errors,
-    # So we convert it to proper api response
+    # DRF default exception handler does not handle non API errors,
+    # So we convert it to proper API response
     if not response:
-        if getattr(settings, 'MATHESAR_CAPTURE_UNHANDLED_EXCEPTION', False):
-            # Check if we have an equivalent Api exception that is able to convert the exception to proper error
-            exception_mapper = exception_map.get(exc.__class__, get_default_api_exception)
-            api_exception = exception_mapper(exc)
-            response = exception_handler(api_exception, context)
-        else:
-            raise exc
+        # Check if we have an equivalent API exception that is able to convert the exception to proper error
+        mapped_exception_class = exception_map.get(exc.__class__)
+        if mapped_exception_class is None:
+            if getattr(settings, 'MATHESAR_CAPTURE_UNHANDLED_EXCEPTION', False):
+                mapped_exception_class = get_default_api_exception
+            else:
+                raise exc
+        api_exception = mapped_exception_class(exc)
+        response = exception_handler(api_exception, context)
 
     if response is not None:
         # Check if conforms to the api spec
@@ -76,6 +84,9 @@ def mathesar_exception_handler(exc, context):
                 response_data['code'] = error_code
                 response_data['message'] = error_message
                 response_data['details'] = {'exception': force_str(exc)}
+                # Stacktrace should only be returned if MATHESAR_MODE is set to DEVELOPMENT
+                if settings.MATHESAR_MODE == 'DEVELOPMENT':
+                    response_data['stacktrace'] = reformat_stacktrace(traceback.format_exc())
                 response.data = [response_data]
     return response
 
@@ -92,3 +103,8 @@ def is_pretty(data):
             ):
                 return False
         return True
+
+
+def reformat_stacktrace(stacktrace):
+    stacktrace_list = stacktrace.splitlines()[1:]
+    return [f'{i + 1}. {line.strip()}' for i, line in enumerate(stacktrace_list)]

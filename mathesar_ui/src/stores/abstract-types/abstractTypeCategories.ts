@@ -1,56 +1,118 @@
-import type { DbType } from '@mathesar/App.d';
-import { abstractTypeCategory, unknownAbstractTypeResponse } from './constants';
-import Text from './type-configs/text';
+import type { DbType } from '@mathesar/AppTypes';
+import { abstractTypeCategory } from './constants';
+import Text, { DB_TYPES as textDbTypes } from './type-configs/text';
+import Money from './type-configs/money';
+import Email from './type-configs/email';
 import Number from './type-configs/number';
 import Boolean from './type-configs/boolean';
-import Unknown from './type-configs/unknown';
+import Uri from './type-configs/uri';
+import Duration from './type-configs/duration';
+import Date from './type-configs/date';
+import Time from './type-configs/time';
+import DateTime from './type-configs/datetime';
+import Fallback from './type-configs/fallback';
+import jsonArrayFactory from './type-configs/comboTypes/jsonArrayFactory';
+import jsonObjectFactory from './type-configs/comboTypes/jsonObjectFactory';
+import arrayFactory from './type-configs/comboTypes/arrayFactory';
 import type {
   AbstractType,
   AbstractTypesMap,
   AbstractTypeResponse,
-  AbstractTypeConfiguration,
+  AbstractTypeCategoryIdentifier,
+  AbstractTypeConfigurationPartialMap,
+  AbstractTypeConfigurationFactory,
 } from './types';
+import { unknownAbstractType, identifyAbstractTypeForDbType } from './utils';
 
 /**
  * This is meant to be serializable and replaced by an API
  * at a later point
  */
-const abstractTypeCategories = {
+const simpleAbstractTypeCategories: AbstractTypeConfigurationPartialMap = {
   [abstractTypeCategory.Text]: Text,
+  [abstractTypeCategory.Money]: Money,
+  [abstractTypeCategory.Email]: Email,
   [abstractTypeCategory.Number]: Number,
   [abstractTypeCategory.Boolean]: Boolean,
-  [abstractTypeCategory.Other]: Unknown,
+  [abstractTypeCategory.Uri]: Uri,
+  [abstractTypeCategory.Duration]: Duration,
+  [abstractTypeCategory.Date]: Date,
+  [abstractTypeCategory.Time]: Time,
+  [abstractTypeCategory.DateTime]: DateTime,
 };
 
-function getAbstractTypeConfiguration(
-  identifier: AbstractType['identifier'],
-): AbstractTypeConfiguration {
-  return (
-    abstractTypeCategories[identifier] ||
-    abstractTypeCategories[abstractTypeCategory.Other]
-  );
-}
+const comboAbstractTypeCategories: Partial<
+  Record<AbstractTypeCategoryIdentifier, AbstractTypeConfigurationFactory>
+> = {
+  [abstractTypeCategory.Array]: arrayFactory,
+  [abstractTypeCategory.JsonArray]: jsonArrayFactory,
+  [abstractTypeCategory.JsonObject]: jsonObjectFactory,
+};
 
-function constructAbstractTypeFromResponse(
-  response: AbstractTypeResponse,
-): AbstractType {
-  return {
-    identifier: response.identifier,
-    name: response.name,
-    ...getAbstractTypeConfiguration(response.identifier),
-    dbTypes: new Set(response.db_types),
-  } as AbstractType;
-}
+export const defaultDbType = textDbTypes.TEXT;
 
 export function constructAbstractTypeMapFromResponse(
   abstractTypesResponse: AbstractTypeResponse[],
 ): AbstractTypesMap {
-  const abstractTypesMap: AbstractTypesMap = new Map();
+  const simpleAbstractTypesMap: Map<AbstractType['identifier'], AbstractType> =
+    new Map();
+  const complexAbstractTypeFactories: (Pick<
+    AbstractType,
+    'identifier' | 'name' | 'dbTypes'
+  > & { factory: AbstractTypeConfigurationFactory })[] = [];
+
   abstractTypesResponse.forEach((entry) => {
-    abstractTypesMap.set(
-      entry.identifier,
-      constructAbstractTypeFromResponse(entry),
-    );
+    if (entry.identifier === 'other') {
+      /**
+       * Ignore "Other" type sent in response.
+       * This is a failsafe to ensure that the frontend does not
+       * break when the "Other" type does not contain db_types which
+       * are either the type or valid_target_type for any column.
+       */
+      return;
+    }
+
+    const partialAbstractType = {
+      identifier: entry.identifier,
+      name: entry.name,
+      dbTypes: new Set(entry.db_types),
+    };
+
+    const simpleAbstractTypeCategory =
+      simpleAbstractTypeCategories[entry.identifier];
+    if (simpleAbstractTypeCategory) {
+      simpleAbstractTypesMap.set(entry.identifier, {
+        ...partialAbstractType,
+        ...simpleAbstractTypeCategory,
+      });
+      return;
+    }
+
+    const complexAbstractTypeFactory =
+      comboAbstractTypeCategories[entry.identifier];
+    if (complexAbstractTypeFactory) {
+      complexAbstractTypeFactories.push({
+        ...partialAbstractType,
+        factory: complexAbstractTypeFactory,
+      });
+      return;
+    }
+
+    simpleAbstractTypesMap.set(entry.identifier, {
+      ...partialAbstractType,
+      ...Fallback,
+    });
+  });
+
+  const abstractTypesMap: AbstractTypesMap = new Map(simpleAbstractTypesMap);
+
+  complexAbstractTypeFactories.forEach((entry) => {
+    abstractTypesMap.set(entry.identifier, {
+      identifier: entry.identifier,
+      name: entry.name,
+      dbTypes: entry.dbTypes,
+      ...entry.factory(simpleAbstractTypesMap),
+    });
   });
   return abstractTypesMap;
 }
@@ -62,46 +124,56 @@ export function constructAbstractTypeMapFromResponse(
  *
  * However, it is not handled here yet, since it requires additional confirmation.
  */
-export function getAbstractTypesForDbTypeList(
-  dbTypes: DbType[],
+export function getAllowedAbstractTypesForDbTypeAndItsTargetTypes(
+  dbType: DbType,
+  targetDbTypes: DbType[],
   abstractTypesMap: AbstractTypesMap,
 ): AbstractType[] {
-  if (dbTypes && abstractTypesMap) {
-    const abstractTypeSet: Set<AbstractType> = new Set();
-    let isUnknownTypeRequired = false;
-    dbTypes.forEach((dbType) => {
-      let isKnownType = false;
-      // eslint-disable-next-line no-restricted-syntax
-      for (const [, abstractType] of abstractTypesMap) {
-        if (abstractType.dbTypes.has(dbType)) {
-          abstractTypeSet.add(abstractType);
-          isKnownType = true;
-          break;
-        }
-      }
-      if (!isKnownType) {
-        isUnknownTypeRequired = true;
-      }
-    });
-    const abstractTypeList = [...abstractTypeSet].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
-    if (isUnknownTypeRequired) {
-      abstractTypeList.push(
-        constructAbstractTypeFromResponse(unknownAbstractTypeResponse),
-      );
-    }
-    return abstractTypeList;
+  const abstractTypeSet: Set<AbstractType> = new Set();
+
+  const abstractTypeOfDbType = identifyAbstractTypeForDbType(
+    dbType,
+    abstractTypesMap,
+  );
+  if (abstractTypeOfDbType) {
+    abstractTypeSet.add(abstractTypeOfDbType);
   }
-  return [];
+
+  targetDbTypes.forEach((targetDbType) => {
+    const abstractType = identifyAbstractTypeForDbType(
+      targetDbType,
+      abstractTypesMap,
+    );
+    if (abstractType) {
+      abstractTypeSet.add(abstractType);
+    }
+  });
+  const abstractTypeList = [...abstractTypeSet].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+
+  if (!abstractTypeOfDbType) {
+    abstractTypeList.push(unknownAbstractType);
+  }
+  return abstractTypeList;
 }
 
-export function getAbstractTypeForDbType(
-  dbType: DbType,
+export function getAllowedAbstractTypesForNewColumn(
   abstractTypesMap: AbstractTypesMap,
-): AbstractType {
-  return (
-    getAbstractTypesForDbTypeList([dbType], abstractTypesMap)[0] ||
-    constructAbstractTypeFromResponse(unknownAbstractTypeResponse)
-  );
+) {
+  return [...abstractTypesMap.values()]
+    .filter((type) => !comboAbstractTypeCategories[type.identifier])
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function getDefaultDbTypeOfAbstractType(
+  abstractType: AbstractType,
+): DbType {
+  if (abstractType.defaultDbType) {
+    return abstractType.defaultDbType;
+  }
+  if (abstractType.dbTypes.size > 0) {
+    return [...abstractType.dbTypes][0];
+  }
+  return defaultDbType;
 }

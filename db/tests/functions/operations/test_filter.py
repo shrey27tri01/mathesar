@@ -1,13 +1,13 @@
 import re
 import pytest
 
-from db.utils import execute_query
+from db.utils import execute_pg_query
 
 from db.functions.base import (
-    ColumnName, Not, Literal, Empty, Equal, Greater, And, Or, StartsWith, Contains, StartsWithCaseInsensitive, ContainsCaseInsensitive
+    ColumnName, Not, Literal, Null, Equal, Greater, And, Or, StartsWith, Contains, StartsWithCaseInsensitive, ContainsCaseInsensitive
 )
 from db.functions.packed import (
-    GreaterOrEqual, LesserOrEqual
+    GreaterOrEqual, LesserOrEqual, NotNull
 )
 from db.functions.operations.apply import apply_db_function_as_filter
 
@@ -21,8 +21,8 @@ def _ilike(x, v):
 
 
 database_functions = {
-    "is_null": lambda x: Empty([ColumnName([x])]),
-    "is_not_null": lambda x: Not([Empty([ColumnName([x])])]),
+    "is_null": lambda x: Null([ColumnName([x])]),
+    "is_not_null": lambda x: NotNull([ColumnName([x])]),
     "eq": lambda x, v: Equal([ColumnName([x]), Literal([v])]),
     "gt": lambda x, v: Greater([ColumnName([x]), Literal([v])]),
     "and": lambda x: And(x),
@@ -112,7 +112,7 @@ def test_filter_with_db_functions(
 
     query = apply_db_function_as_filter(relation, db_function)
 
-    record_list = execute_query(engine, query)
+    record_list = execute_pg_query(engine, query)
 
     if column_name == "array" and value is not None and op not in ["any", "not_any"]:
         value = [int(c) for c in value[1:-1].split(",")]
@@ -153,7 +153,7 @@ def test_filter_boolean_ops(
 
     query = apply_db_function_as_filter(relation, db_function)
 
-    record_list = execute_query(engine, query)
+    record_list = execute_pg_query(engine, query)
 
     assert len(record_list) == res_len
     for record in record_list:
@@ -183,7 +183,7 @@ def test_filtering_nested_boolean_ops(filter_sort_table_obj):
 
     query = apply_db_function_as_filter(relation, db_function)
 
-    record_list = execute_query(engine, query)
+    record_list = execute_pg_query(engine, query)
 
     assert len(record_list) == 2
     for record in record_list:
@@ -194,9 +194,9 @@ def test_filtering_nested_boolean_ops(filter_sort_table_obj):
 @pytest.mark.parametrize("column_name,main_db_function,literal_param,expected_count", [
     ("time", Equal, "06:05:06.789", 1),
     ("date", Equal, "1999-01-08", 1),
-    ("time", LesserOrEqual, "04:05:06.789", 2),
+    ("time", LesserOrEqual, "04:05:06.789", 5),
     ("timestamp", Greater, "1995-01-08", 1),
-    ("interval", Greater, "P1Y2M3DT4H5M6S", 2),
+    ("interval", Greater, "P1Y2M3DT4H5M6S", 5),
 ])
 def test_filtering_time_types(times_table_obj, column_name, main_db_function, literal_param, expected_count):
     _filters_as_expected(times_table_obj, column_name, main_db_function, literal_param, expected_count)
@@ -231,5 +231,5 @@ def _filters_as_expected(table_engine, column_name, main_db_function, literal_pa
         Literal([literal_param]),
     ])
     query = apply_db_function_as_filter(selectable, db_function)
-    record_list = execute_query(engine, query)
+    record_list = execute_pg_query(engine, query)
     assert len(record_list) == expected_count

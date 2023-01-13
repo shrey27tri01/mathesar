@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { IconDefinition } from '@fortawesome/free-solid-svg-icons';
-  import type { IconFlip, IconRotate } from './Icon.d';
+  import type { IconProps } from './IconTypes';
+  import IconPath from './IconPath.svelte';
 
   // NOTE:
   // The type definition for the props here are duplicated in `Icon.d.ts` too.
@@ -9,8 +9,8 @@
   // should hopefully be able to clean up this code duplication a bit.
 
   // The Font-awesome icon definition from 'fortawesome' package.
-  export let data: IconDefinition;
-  $: [viewBoxWith, viewBoxHeight, , , path] = data.icon;
+  export let data: IconProps['data'];
+  $: [viewBoxWidth, viewBoxHeight, , , path] = data.icon;
 
   // The size of the icon. Accepts a valid dimension with unit.
   export let size = '1em';
@@ -22,10 +22,10 @@
   export let pulse = false;
 
   // Flips the icon. Allowed values are 'vertical', 'horizontal' or 'both'.
-  export let flip: IconFlip | undefined = undefined;
+  export let flip: IconProps['flip'] | undefined = undefined;
 
   // Rotates the icon to a specified angle. Allowed values are '90', '180', '270'.
-  export let rotate: IconRotate | undefined = undefined;
+  export let rotate: IconProps['rotate'] | undefined = undefined;
 
   // Additional classes
   let classes = '';
@@ -34,10 +34,13 @@
   // The aria-label for the icon. Typically describes the icon.
   export let label: string | undefined = undefined;
 
+  // Tooltip
+  export let title: string | undefined = undefined;
+
   function concatClasses(
     _classes?: string,
-    _flip?: IconFlip,
-    _rotate?: IconRotate,
+    _flip?: IconProps['flip'],
+    _rotate?: IconProps['rotate'],
   ): string {
     const faClass = ['fa-icon'];
     if (_classes) {
@@ -58,7 +61,7 @@
 
 <svg
   version="1.1"
-  viewBox="0 0 {viewBoxWith} {viewBoxHeight}"
+  viewBox="0 0 {viewBoxWidth} {viewBoxHeight}"
   width={size}
   height={size}
   class={faClasses}
@@ -68,11 +71,14 @@
   role={label ? 'img' : 'presentation'}
   {...$$restProps}
 >
+  {#if title}
+    <title>{title}</title>
+  {/if}
   {#if Array.isArray(path)}
     {#each path as entry (entry)}
-      <path d={entry} />
+      <IconPath path={entry} />
     {/each}
   {:else}
-    <path d={path} />
+    <IconPath {path} />
   {/if}
 </svg>

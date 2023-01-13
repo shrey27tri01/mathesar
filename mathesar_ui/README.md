@@ -78,7 +78,7 @@ If you don't have your editor configured to auto-format your code, then you'll n
 - Format a specific file
 
   ```
-  docker exec -it -w /code/mathesar_ui mathesar_service npx prettier --write src/sections/Base.svelte
+  docker exec -it -w /code/mathesar_ui mathesar_service npx prettier --write src/App.svelte
   ```
 
 ## Linting
@@ -94,7 +94,7 @@ We use [ESLint](https://eslint.org/) to help spot more complex issues within cod
 - Lint a specific file:
 
   ```
-  docker exec -it -w /code/mathesar_ui mathesar_service npx eslint src/sections/Base.svelte
+  docker exec -it -w /code/mathesar_ui mathesar_service npx eslint src/App.svelte
   ```
 
 ## Testing
@@ -105,7 +105,7 @@ See [Integration tests](../mathesar/tests/integration/README.md).
 
 ### Unit tests
 
-We use [Jest](https://jestjs.io/) to run our unit tests, and we use [Testing Library](https://testing-library.com/docs/svelte-testing-library/intro/) to test our Svelte components.
+We use [Vitest](https://vitest.dev/) to run our unit tests, and we use [Testing Library](https://testing-library.com/docs/svelte-testing-library/intro/) to test our Svelte components.
 
 #### Running unit tests
 
@@ -118,7 +118,7 @@ We use [Jest](https://jestjs.io/) to run our unit tests, and we use [Testing Lib
 - Re-run a specific test by name:
 
   ```
-  docker exec -it -w /code/mathesar_ui mathesar_service npx jest TextInput
+  docker exec -it -w /code/mathesar_ui mathesar_service npm run test TextInput
   ```
 
   This will run all test files with file names containing `TextInput`.
@@ -150,8 +150,8 @@ We use [Jest](https://jestjs.io/) to run our unit tests, and we use [Testing Lib
   });
   ```
 
-- Functions like `test` and `expect` are automatically imported into scope by the test runner. Your editor should hopefully be smart enough to see that Jest is configured for our project and provide you some assistance in using those functions. You can find more in the [Jest docs](https://jestjs.io/docs/getting-started), but there's not much else you'll need if you follow the pattern above.
-- After, `expect`, you'll use a [matcher](https://jestjs.io/docs/using-matchers). In the example above, we've used `toBe` which is one of the simplest matchers. However `toBe` only works for primitives like numbers, booleans, and strings. If you want to compare two objects or arrays, you'll need to use `toEqual` instead, which performs a deep comparison.
+- Functions like `test` and `expect` are globally imported into scope by the test runner. Your editor should hopefully be smart enough to see that Vitest is configured for our project and provide you some assistance in using those functions. You can find more in the [Vitest docs](https://vitest.dev/guide/), but there's not much else you'll need if you follow the pattern above.
+- After, `expect`, you'll use a [matcher](https://vitest.dev/api/#expect). In the example above, we've used `toBe` which is one of the simplest matchers. However `toBe` only works for primitives like numbers, booleans, and strings. If you want to compare two objects or arrays, you'll need to use `toEqual` instead, which performs a deep comparison.
 - The `expect` call is an "assertion". We can put many of them within the same test, but the test will stop running when it hits the first failure.
 - We can put many tests within the same file.
 - Commonly we'll have one test for each function, and many assertions within that test. You can also declare variables and do other logic within the test too if you're trying to build up complex scenarios with assertions throughout a workflow. As the scenarios get more complex, it can be helpful to create multiple tests for the same function.
@@ -169,7 +169,7 @@ If you want to add or remove packages, or basically run any npm action, **always
    cd mathesar_ui
    ```
 
-1. Perform any action from within it.
+1. Add or remove packages.
 
    ```bash
    root@c273da65c52d:/code/mathesar_ui$ ls
@@ -180,6 +180,20 @@ If you want to add or remove packages, or basically run any npm action, **always
 
    root@c273da65c52d:/code/mathesar_ui$ npm uninstall <package>
    ```
+
+1. Before committing the `package-lock.json` file, run `npm install --unsafe-perm` in the container.
+
+   ```bash
+   root@c273da65c52d:/code/mathesar_ui$ npm install --unsafe-perm
+   ```
+
+   Reason:
+
+   - We force resolutions of certain packages which have vulnerabilities, using the [`npm-force-resolutions` package](https://www.npmjs.com/package/npm-force-resolutions).
+   - These resolutions are mentioned in the package.json file. They are only to be used when nested dependencies have severe vulnerabilities but our direct dependencies do not use the vulnerability free versions. Extra care should be taken here to make sure the direct dependencies do not break.
+   - This needs to run during the `preinstall` lifecycle.
+   - After every package action (add/remove), the `npm install` command needs to be run additionally to enforce these resolutions.
+   - Since our node instance runs as root in the container, the [`--unsafe-perm` flag](https://docs.npmjs.com/cli/v6/using-npm/config#unsafe-perm) needs to be specified.
 
 ## Components
 
@@ -204,4 +218,4 @@ We use [Storybook](https://storybook.js.org/) to develop and document our compon
 
 ## Coding standards
 
-See https://wiki.mathesar.org/engineering/architecture/front-end-standards
+See https://wiki.mathesar.org/en/engineering/standards/frontend

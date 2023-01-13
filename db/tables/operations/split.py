@@ -1,49 +1,42 @@
-from sqlalchemy import Column, func, select, ForeignKey, literal, exists
+from sqlalchemy import exists, func, literal, select
 
 from db import constants
 from db.columns.base import MathesarColumn
-from db.columns.defaults import ID_TYPE
+from db.columns.operations.alter import batch_alter_table_drop_columns, rename_column
+from db.columns.operations.select import (
+    get_column_attnum_from_name,
+    get_column_names_from_attnums,
+)
+from db.links.operations.create import create_foreign_key_link
 from db.tables.operations.create import create_mathesar_table
-from db.tables.operations.select import reflect_table
+from db.tables.operations.select import get_oid_from_table, reflect_table, reflect_table_from_oid
+from db.metadata import get_empty_metadata
 
 
-def _split_column_list(columns_, extracted_column_names):
-    extracted_columns = [
-        col for col in columns_ if col.name in extracted_column_names
-    ]
-    remainder_columns = [
-        col for col in columns_ if col.name not in extracted_column_names
-    ]
-    return extracted_columns, remainder_columns
-
-
-def _create_split_tables(extracted_table_name, extracted_columns, remainder_table_name, remainder_columns, schema, engine):
+def _create_split_tables(extracted_table_name, extracted_columns, remainder_table_name, schema, engine, fk_column_name=None):
     extracted_table = create_mathesar_table(
         extracted_table_name,
         schema,
         extracted_columns,
         engine,
     )
-    remainder_fk_column = Column(
-        f"{extracted_table.name}_{constants.ID}",
-        ID_TYPE,
-        ForeignKey(f"{extracted_table.name}.{constants.ID}"),
-        nullable=False,
-    )
-    remainder_table = create_mathesar_table(
-        remainder_table_name,
-        schema,
-        [remainder_fk_column] + remainder_columns,
-        engine,
-        metadata=extracted_table.metadata
-    )
-    return extracted_table, remainder_table, remainder_fk_column.name
+    fk_column_name = fk_column_name if fk_column_name else f"{extracted_table.name}_{constants.ID}"
+    extracted_column_names = [
+        col.name for col in extracted_columns
+    ]
+    if fk_column_name in extracted_column_names:
+        fk_column_name = f"mathesar_temp_{fk_column_name}"
+    remainder_table_oid = get_oid_from_table(remainder_table_name, schema, engine)
+    extracted_table_oid = get_oid_from_table(extracted_table_name, schema, engine)
+    create_foreign_key_link(engine, schema, fk_column_name, remainder_table_oid, extracted_table_oid)
+    # TODO reuse metadata
+    remainder_table_with_fk_key = reflect_table(remainder_table_name, schema, engine, metadata=get_empty_metadata())
+    return extracted_table, remainder_table_with_fk_key, fk_column_name
 
 
-def _create_split_insert_stmt(old_table, extracted_table, extracted_columns, remainder_table, remainder_columns, remainder_fk_name):
+def _create_split_insert_stmt(old_table, extracted_table, extracted_columns, remainder_fk_name):
     SPLIT_ID = f"{constants.MATHESAR_PREFIX}_split_column_alias"
     extracted_column_names = [col.name for col in extracted_columns]
-    remainder_column_names = [col.name for col in remainder_columns]
     split_cte = select(
         [
             old_table,
@@ -53,10 +46,6 @@ def _create_split_insert_stmt(old_table, extracted_table, extracted_columns, rem
     cte_extraction_columns = (
         [split_cte.columns[SPLIT_ID]]
         + [split_cte.columns[n] for n in extracted_column_names]
-    )
-    cte_remainder_columns = (
-        [split_cte.columns[SPLIT_ID]]
-        + [split_cte.columns[n] for n in remainder_column_names]
     )
     extract_sel = select(
         cte_extraction_columns,
@@ -69,50 +58,79 @@ def _create_split_insert_stmt(old_table, extracted_table, extracted_columns, rem
         .returning(literal(1))
         .cte()
     )
-    remainder_sel = select(
-        cte_remainder_columns,
-        distinct=True
-    ).where(exists(extract_ins_cte.select()))
-
+    fk_update_dict = {remainder_fk_name: split_cte.c[SPLIT_ID]}
     split_ins = (
-        remainder_table
-        .insert()
-        .from_select(
-            [remainder_fk_name] + remainder_column_names,
-            remainder_sel
-        )
+        old_table
+        .update().values(**fk_update_dict).
+        where(old_table.c[constants.ID] == split_cte.c[constants.ID],
+              exists(extract_ins_cte.select()))
     )
     return split_ins
 
 
-def extract_columns_from_table(old_table_name, extracted_column_names, extracted_table_name, remainder_table_name, schema, engine, drop_original_table=False):
-    old_table = reflect_table(old_table_name, schema, engine)
+def extract_columns_from_table(old_table_oid, extracted_column_attnums, extracted_table_name, schema, engine, relationship_fk_column_name=None):
+    # TODO reuse metadata
+    old_table = reflect_table_from_oid(old_table_oid, engine, metadata=get_empty_metadata())
+    old_table_name = old_table.name
     old_columns = (MathesarColumn.from_column(col) for col in old_table.columns)
     old_non_default_columns = [
         col for col in old_columns if not col.is_default
     ]
-    extracted_columns, remainder_columns = _split_column_list(
-        old_non_default_columns, extracted_column_names,
-    )
+    # TODO reuse metadata
+    extracted_column_names = get_column_names_from_attnums(old_table_oid, extracted_column_attnums, engine, metadata=get_empty_metadata())
+    extracted_columns = [
+        col for col in old_non_default_columns if col.name in extracted_column_names
+    ]
     with engine.begin() as conn:
-        extracted_table, remainder_table, remainder_fk = _create_split_tables(
+        extracted_table, remainder_table_with_fk_column, fk_column_name = _create_split_tables(
             extracted_table_name,
             extracted_columns,
-            remainder_table_name,
-            remainder_columns,
+            old_table_name,
             schema,
             engine,
+            relationship_fk_column_name
         )
         split_ins = _create_split_insert_stmt(
-            old_table,
+            remainder_table_with_fk_column,
             extracted_table,
             extracted_columns,
-            remainder_table,
-            remainder_columns,
-            remainder_fk,
+            fk_column_name,
         )
         conn.execute(split_ins)
-    if drop_original_table:
-        old_table.drop()
+        update_pk_sequence_to_latest(conn, engine, extracted_table)
 
-    return extracted_table, remainder_table, remainder_fk
+        remainder_table_oid = get_oid_from_table(remainder_table_with_fk_column.name, schema, engine)
+        deletion_column_data = [
+            {'attnum': column_attnum, 'delete': True}
+            for column_attnum in extracted_column_attnums
+        ]
+        batch_alter_table_drop_columns(remainder_table_oid, deletion_column_data, conn, engine)
+        fk_column_attnum = get_column_attnum_from_name(remainder_table_oid, fk_column_name, engine, get_empty_metadata())
+        if relationship_fk_column_name != fk_column_name:
+            rename_column(remainder_table_oid, fk_column_attnum, engine, conn, relationship_fk_column_name)
+    return extracted_table, remainder_table_with_fk_column, fk_column_attnum
+
+
+def update_pk_sequence_to_latest(conn, engine, extracted_table):
+    _preparer = engine.dialect.identifier_preparer
+    quoted_table_name = _preparer.quote(extracted_table.schema) + "." + _preparer.quote(extracted_table.name)
+    update_pk_sequence_stmt = func.setval(
+        # `pg_get_serial_sequence needs a string of the Table name
+        func.pg_get_serial_sequence(
+            quoted_table_name,
+            extracted_table.c[constants.ID].name
+        ),
+        # If the table can be empty, start from 1 instead of using Null
+        func.coalesce(
+            func.max(extracted_table.c[constants.ID]) + 1,
+            1
+        ),
+        # Set the sequence to use the last value of the sequence
+        # Setting is_called field to false, meaning that the next nextval will not advance the sequence before returning a value.
+        # We need to do it as our default coalesce value is 1 instead of 0
+        # Refer the postgres docs https://www.postgresql.org/docs/current/functions-sequence.html
+        False
+    )
+    conn.execute(
+        select(update_pk_sequence_stmt)
+    )

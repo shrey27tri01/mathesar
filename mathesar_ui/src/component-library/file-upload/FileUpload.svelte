@@ -9,39 +9,28 @@
 
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import { faFile, faFileUpload } from '@fortawesome/free-solid-svg-icons';
   import { Icon, Progress, formatSize } from '@mathesar-component-library';
-  import type {
-    FileUpload,
-    FileUploadProgress,
-    FileUploadAddDetail,
-  } from './FileUpload.d';
+  import {
+    iconFile,
+    iconUploadFile,
+  } from '@mathesar-component-library-dir/common/icons';
+  import type { FileUpload, FileUploadAddDetail } from './FileUploadTypes';
 
-  const dispatch = createEventDispatcher();
+  const dispatch = createEventDispatcher<{ add: FileUploadAddDetail }>();
   const componentId = `file-import-${getId()}`;
 
-  export let fileProgress: Record<string, FileUploadProgress> | undefined =
+  export let fileProgress: Record<string, number | undefined> | undefined =
     undefined;
   export let multiple = false;
   export let fileUploads: FileUpload[] | undefined = undefined;
+  export let disabled = false;
 
   let fileId = 0;
   let state = 'idle';
 
-  export function updateState(
-    fileIdentifier: string,
-    progress: FileUploadProgress,
-  ): void {
-    fileProgress = {
-      ...fileProgress,
-      [fileIdentifier]: progress,
-    };
-  }
-
   function processFiles(event: Event, files: FileList | File[]) {
     const newUploads: FileUpload[] = [];
 
-    // eslint-disable-next-line no-restricted-syntax
     for (const file of files) {
       newUploads.push({
         fileId: `${componentId}-${fileId}`,
@@ -69,19 +58,21 @@
   }
 
   function onFileDrop(event: DragEvent) {
-    const fileList = event.dataTransfer?.files;
-    if (!fileList) {
-      return;
-    }
-    if (multiple) {
-      processFiles(event, fileList);
-    } else {
-      processFiles(event, [fileList[0]]);
+    if (!disabled) {
+      const fileList = event.dataTransfer?.files;
+      if (!fileList) {
+        return;
+      }
+      if (multiple) {
+        processFiles(event, fileList);
+      } else {
+        processFiles(event, [fileList[0]]);
+      }
     }
   }
 
   function checkAndOpen(event: KeyboardEvent) {
-    if (event.key === 'Enter') {
+    if (!disabled && event.key === 'Enter') {
       (event.target as HTMLElement).click();
     }
   }
@@ -89,25 +80,24 @@
 
 <div
   class="file-upload"
+  class:disabled
   class:inprogress={fileUploads && fileUploads.length > 0}
 >
   {#if fileUploads && fileUploads.length > 0}
     <div class="files">
       {#each fileUploads as upload (upload.fileId)}
         <div class="file">
-          <Icon data={faFile} size="3.5em" />
           <div class="file-info">
-            <div class="name">{upload.file.name}</div>
+            <div class="file-name">
+              <Icon {...iconFile} />
+              <span>{upload.file.name}</span>
+            </div>
             <Progress
-              percentage={Math.round(
-                fileProgress?.[upload.fileId]?.progress || 0,
-              )}
+              percentage={Math.round(fileProgress?.[upload.fileId] ?? 0)}
             />
             <div class="upload-info">
               <span>
-                Uploaded {Math.round(
-                  fileProgress?.[upload.fileId]?.progress || 0,
-                )}%
+                Uploaded {Math.round(fileProgress?.[upload.fileId] ?? 0)}%
               </span>
               <span>{formatSize(upload.file.size)}</span>
             </div>
@@ -147,10 +137,12 @@
     >
       <slot>
         <div class="message">
-          <Icon size="60px" data={faFileUpload} />
+          <div class="icon-holder">
+            <Icon {...iconUploadFile} />
+          </div>
           <div class="text">
             <div class="title">Drag a file here</div>
-            <div>or click to browse a file from your computer</div>
+            <div class="desc">or click to browse a file from your computer</div>
           </div>
         </div>
       </slot>

@@ -1,14 +1,14 @@
 <script lang="ts">
   import { tick, createEventDispatcher } from 'svelte';
+  import { Button, Icon } from '@mathesar-component-library';
   import {
-    faAngleDoubleLeft,
-    faAngleDoubleRight,
-    faEllipsisH,
-    faAngleLeft,
-    faAngleRight,
-  } from '@fortawesome/free-solid-svg-icons';
-  import { Icon } from '@mathesar-component-library';
-  import { calculatePages } from './paginationUtils';
+    iconChooseItemPrevious,
+    iconShowMore,
+    iconChooseItemManyPrior,
+    iconChooseItemManyAhead,
+    iconChooseItemNext,
+  } from '@mathesar-component-library-dir/common/icons';
+  import { calculatePages, getPageCount } from './paginationUtils';
 
   const dispatch = createEventDispatcher();
 
@@ -28,22 +28,10 @@
   export let getLink: ((page: number, pageSize: number) => string) | undefined =
     undefined;
 
-  // Total number of pages.
-  //
-  // TODO: @seancolsen says:
-  // > Refactor `pageCount` to no longer be an exported prop. We're exporting it
-  // > just so the parent component can access the calculation done within this
-  // > component. That's an unconventional flow of data.
-  //
-  // See https://github.com/centerofci/mathesar/pull/1109#discussion_r818638950
-  // for further discussion. @pavish and @seancolsen settled on an approach
-  // using a utils function.
-  export let pageCount = 0;
-
   // ARIA Label for component
   export let ariaLabel = 'Pagination';
 
-  $: pageCount = Math.ceil(total / pageSize);
+  $: pageCount = getPageCount(total, pageSize);
   $: pageInfo = calculatePages(currentPage, pageCount);
 
   async function setPage(e: Event, _page: number) {
@@ -60,19 +48,20 @@
   }
 </script>
 
-<nav role="navigation" aria-label={ariaLabel}>
+<nav aria-label={ariaLabel}>
   <ul class="pagination">
     {#if pageCount > 1}
       <li>
-        <button
+        <Button
+          appearance="plain"
           tabindex="0"
           role="link"
           aria-label="Previous"
           on:click={(e) => setPage(e, currentPage - 1)}
           disabled={currentPage === 1}
         >
-          <Icon data={faAngleLeft} tabindex="-1" />
-        </button>
+          <Icon {...iconChooseItemPrevious} tabindex="-1" />
+        </Button>
       </li>
     {/if}
 
@@ -90,28 +79,32 @@
             1
           </a>
         {:else}
-          <button
+          <Button
             tabindex="0"
+            appearance="secondary"
             role="link"
             aria-label="Goto Page 1"
             class="page"
             on:click={(e) => setPage(e, 1)}
           >
             1
-          </button>
+          </Button>
         {/if}
       </li>
       {#if pageInfo.start > 2}
         <li>
-          <button
+          <Button
             tabindex="0"
             role="link"
+            appearance="plain"
             aria-label="Goto Page {pageInfo.prevPageWindow}"
             on:click={(e) => setPage(e, pageInfo.prevPageWindow)}
           >
-            <Icon class="ellipsis" data={faEllipsisH} />
-            <Icon class="arrow" data={faAngleDoubleLeft} />
-          </button>
+            <span>
+              <Icon class="ellipsis" {...iconShowMore} />
+              <Icon class="arrow" {...iconChooseItemManyPrior} />
+            </span>
+          </Button>
         </li>
       {/if}
     {/if}
@@ -134,8 +127,9 @@
             {_page}
           </a>
         {:else}
-          <button
+          <Button
             tabindex="0"
+            appearance="secondary"
             role="link"
             aria-label={currentPage === _page
               ? `Current Page, Page ${currentPage}`
@@ -146,7 +140,7 @@
             aria-selected={currentPage === _page}
           >
             {_page}
-          </button>
+          </Button>
         {/if}
       </li>
     {/each}
@@ -154,15 +148,18 @@
     {#if pageInfo.end < pageCount}
       {#if pageInfo.end < pageCount - 1}
         <li>
-          <button
+          <Button
             tabindex="0"
+            appearance="plain"
             role="link"
             aria-label="Goto Page {pageInfo.nextPageWindow}"
             on:click={(e) => setPage(e, pageInfo.nextPageWindow)}
           >
-            <Icon class="ellipsis" data={faEllipsisH} />
-            <Icon class="arrow" data={faAngleDoubleRight} />
-          </button>
+            <span>
+              <Icon class="ellipsis" {...iconShowMore} />
+              <Icon class="arrow" {...iconChooseItemManyAhead} />
+            </span>
+          </Button>
         </li>
       {/if}
       <li>
@@ -178,30 +175,32 @@
             {pageCount}
           </a>
         {:else}
-          <button
+          <Button
             tabindex="0"
+            appearance="secondary"
             class="page"
             role="link"
             aria-label="Goto Page {pageCount}"
             on:click={(e) => setPage(e, pageCount)}
           >
             {pageCount}
-          </button>
+          </Button>
         {/if}
       </li>
     {/if}
 
     {#if pageCount > 1}
       <li>
-        <button
+        <Button
           tabindex="0"
+          appearance="plain"
           role="link"
           aria-label="Next"
           on:click={(e) => setPage(e, currentPage + 1)}
           disabled={currentPage === pageCount}
         >
-          <Icon data={faAngleRight} />
-        </button>
+          <Icon {...iconChooseItemNext} />
+        </Button>
       </li>
     {/if}
   </ul>

@@ -3,7 +3,9 @@ class InvalidDefaultError(Exception):
 
 
 class InvalidTypeError(Exception):
-    pass
+    def __init__(self, column_name=None, new_type=None):
+        self.column_name = column_name
+        self.new_type = new_type
 
 
 class InvalidTypeOptionError(Exception):
@@ -15,4 +17,28 @@ class DagCycleError(Exception):
 
 
 class DynamicDefaultWarning(Warning):
+    pass
+
+
+class NotNullError(Exception):
+    pass
+
+
+class ForeignKeyError(Exception):
+    pass
+
+
+class TypeMismatchError(Exception):
+    pass
+
+
+class UniqueValueError(Exception):
+    pass
+
+
+class ExclusionError(Exception):
+    pass
+
+
+class ColumnMappingsNotFound(Exception):
     pass

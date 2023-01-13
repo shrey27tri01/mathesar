@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import type { Tab } from './TabContainer';
+  import type { Tab } from './TabContainerTypes';
 
   const dispatch = createEventDispatcher();
 
@@ -9,7 +9,12 @@
   export let totalTabs: number;
   export let isActive = false;
   export let allowRemoval = false;
-  export let getTabURL: (tab: Tab) => string | undefined;
+  export let uniformTabWidth = true;
+  export let link: string | undefined = undefined;
+
+  $: hasLink = typeof link !== 'undefined';
+  $: tabComponent = hasLink ? 'a' : 'div';
+  $: linkProps = hasLink ? { href: link } : {};
 </script>
 
 <li
@@ -17,24 +22,24 @@
   class="tab"
   class:active={isActive}
   tabindex="-1"
-  style={isActive ? undefined : `width: ${Math.floor(100 / totalTabs)}%;`}
+  style={uniformTabWidth ? `width:${Math.floor(100 / totalTabs)}%;` : undefined}
 >
-  <a
+  <svelte:element
+    this={tabComponent}
     role="tab"
-    href={getTabURL(tab) ?? '#'}
     tabindex="0"
     aria-selected={isActive}
     aria-disabled={!!tab.disabled}
     id={isActive ? `mtsr-${componentId}-tab` : undefined}
-    data-tinro-ignore
     aria-controls={isActive ? `mtsr-${componentId}-tabpanel` : undefined}
+    {...linkProps}
     on:focus
     on:blur
     on:mousedown
     on:click
   >
     <slot />
-  </a>
+  </svelte:element>
 
   {#if allowRemoval}
     <button

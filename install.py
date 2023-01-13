@@ -1,10 +1,11 @@
 """
 This script installs functions and types for Mathesar onto the configured DB.
 """
+import getopt
+import sys
+
 from config.settings import DATABASES
 from db import install
-import sys
-import getopt
 
 
 def main():
@@ -23,14 +24,13 @@ def install_on_db_with_key(database_key, skip_confirm):
         # create the DB
         print("Creating Mathesar DB on docker-created PostgreSQL instance")
         install.create_mathesar_database(
-            DATABASES[database_key]["NAME"],
-            DATABASES["default"]["USER"],
-            DATABASES["default"]["PASSWORD"],
-            DATABASES["default"]["HOST"],
-            DATABASES["default"]["NAME"],
-            DATABASES["default"]["PORT"],
+            user_database=DATABASES[database_key]["NAME"],
+            username=DATABASES["default"]["USER"],
+            password=DATABASES["default"]["PASSWORD"],
+            hostname=DATABASES["default"]["HOST"],
+            root_database=DATABASES["default"]["NAME"],
+            port=DATABASES["default"]["PORT"],
         )
-        print(f"Created DB is {DATABASES['mathesar_tables']['NAME']}")
     else:
         # if we're installing anywhere else, we require the DB to exist in
         # advance.
@@ -40,22 +40,24 @@ def install_on_db_with_key(database_key, skip_confirm):
         db_name = DATABASES[database_key]["NAME"]
         port = DATABASES[database_key]["PORT"]
         print(f"Installing Mathesar DB {db_name} on preexisting PostgreSQL instance at host {host}...")
-        if skip_confirm is False:
+        if skip_confirm is True:
+            confirmation = "y"
+        else:
             confirmation = input(
                 f"Mathesar will be installed on DB {db_name} at host {host}."
                 "Confirm? (y/n) >  "
             )
-            if (confirmation.lower() in ["y", "yes"]) or (skip_confirm is True):
-                print("Installing...")
-                install.install_mathesar_on_preexisting_database(
-                    username,
-                    password,
-                    host,
-                    db_name,
-                    port,
-                )
-            else:
-                print("Skipping DB with key {database_key}.")
+        if confirmation.lower() in ["y", "yes"]:
+            print("Installing...")
+            install.install_mathesar_on_preexisting_database(
+                username,
+                password,
+                host,
+                db_name,
+                port,
+            )
+        else:
+            print("Skipping DB with key {database_key}.")
 
 
 if __name__ == "__main__":

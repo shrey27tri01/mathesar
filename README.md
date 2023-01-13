@@ -6,13 +6,14 @@ Mathesar is an open source software project to help users store, organize, visua
 
 Potential use cases for Mathesar include publishing and exploring public datasets, running business processes such inventory management and project tracking, providing a ready-made interface for speedy data entry and custom reporting, collecting and processing data from large groups of people, simple data cleaning and analysis, and automatic web API generation.
 
-We started building Mathesar in March 2021 and are making steady progress towards releasing an initial version of the project by spring 2022. Please visit [our public wiki](https://wiki.mathesar.org/) to learn more about the project.
+We started building Mathesar in March 2021 and are making steady progress towards releasing an initial version of the project by early 2023. Please visit [our public wiki](https://wiki.mathesar.org/) to learn more about the project.
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
 - [Contributing](#contributing)
+  - [Help with documentation](#help-with-documentation)
 - [Local Development](#local-development)
   - [Developing in Windows](#developing-in-windows)
   - [Configuration Options](#configuration-options)
@@ -30,9 +31,14 @@ We started building Mathesar in March 2021 and are making steady progress toward
 
 We actively encourage contribution! [Join our community](https://wiki.mathesar.org/community) and read through [our contributing guidelines](https://wiki.mathesar.org/community/contributing).
 
+### Help with documentation
+
+See the [README file in our docs/ subfolder](./docs/README.md).
+
 ## Local Development
 
 First, [ensure that you have Docker installed](https://docs.docker.com/get-docker/).
+
 
 Clone the repository and then copy the `.env.example` file to `.env` like so:
 ```
@@ -44,12 +50,27 @@ From the repository's root directory, run:
 docker-compose up
 ```
 
-If it's your first time running the application, you'll also need to run database migrations and install Mathesar types and functions:
-```
-docker exec mathesar_service sh -c "python manage.py migrate && python install.py"
-```
+You should now have a web server and database server running. Opening `http://localhost:8000` in your browser will open the application. 
 
-You should now have a web server and database server running. Opening `http://localhost:8000` in your browser will open the application. For sample table data, you can create a new table in the UI using the `patents.csv` file found in `/mathesar/tests/data`. 
+To get the UI working, you need to login at
+
+`http://localhost:8000/auth/login/`
+
+with username:
+
+`admin` 
+
+and password:
+
+`password` 
+
+If you'd prefer to develop using the Django Rest Framework browsable API, you can use the login functionality at the top right with the same username and password. If you prefer a non-browser tool for API development, you'll have to:
+- Use browser to execute one of the methods above, then
+- Extract the key, value pair for the cookie named `sessionid` using dev tools.
+- submit that cookie with each request until it expires.
+- Repeat as necessary (e.g., when the cookie expires).
+
+For sample table data, you can create a new table in the UI using the `patents.csv` file found in `/mathesar/tests/data`. 
 
 It is recommended that you keep the Docker containers running while you make changes to the code. Any change to the code made locally will sync to the container and the version deployed at `http://localhost:8000` will always be the latest local version of the code.
 
